@@ -1,0 +1,744 @@
+/* ==========================================================================
+   MumaLINK High-Fashion Editorial Hero Stylesheet
+   Direct Clone of Common Studio Design Aesthetics
+   Typography: Plus Jakarta Sans & JetBrains Mono
+   Palette: Deep Obsidian (#08090C), Pure White, Neon Lime (#D4F754), Lilac (#A88BFA)
+   ========================================================================== */
+
+:root {
+  --font-display: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  /* Surfaces */
+  --bg-black: #060709;
+  --bg-card: #0C0D11;
+  --bg-card-subtle: #12141A;
+  --border-hairline: rgba(255, 255, 255, 0.08);
+  --border-hairline-bright: rgba(255, 255, 255, 0.16);
+
+  /* High Contrast Accents */
+  --accent-lime: #D4F754;
+  --accent-lime-hover: #C5E945;
+  --accent-lime-text: #080A04;
+  --accent-lilac: #A88BFA;
+  --accent-lilac-card: #7C5CFC;
+
+  /* Typography */
+  --text-white: #FFFFFF;
+  --text-dim: #9AA0B0;
+  --text-muted: #6E7586;
+  --text-dark: #08090C;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body.editorial-body {
+  font-family: var(--font-display);
+  background-color: var(--bg-black);
+  color: var(--text-white);
+  min-height: 100vh;
+  width: 100vw;
+  overflow-x: hidden;
+  padding: 16px;
+}
+
+/* ==========================================================================
+   Two-Column Editorial Grid Layout
+   ========================================================================== */
+.editorial-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.75fr) minmax(360px, 1fr);
+  gap: 16px;
+  max-width: 1720px;
+  margin: 0 auto;
+  min-height: calc(100vh - 32px);
+}
+
+/* ==========================================================================
+   LEFT MAIN HERO CANVAS (Common Studio Clone)
+   ========================================================================== */
+.hero-canvas-left {
+  position: relative;
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-hairline);
+  border-radius: 28px;
+  padding: 28px 36px 32px 36px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  overflow: hidden;
+  min-height: 900px;
+}
+
+/* Hero African Mother Portrait Backdrop */
+.hero-image-backdrop {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 620px;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.hero-portrait-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 18%;
+  filter: contrast(1.05) brightness(0.92);
+}
+
+.hero-image-overlay-vignette {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 65% 35%, transparent 25%, rgba(12, 13, 17, 0.45) 70%, #0C0D11 100%);
+}
+
+.hero-image-overlay-bottom {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 280px;
+  background: linear-gradient(to bottom, transparent 0%, rgba(12, 13, 17, 0.75) 45%, #0C0D11 100%);
+}
+
+/* Top Navigation Bar */
+.top-nav {
+  position: relative;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.brand-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+}
+
+.brand-logo-img {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+}
+
+.brand-wordmark {
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: var(--text-white);
+}
+
+.nav-links {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+.nav-link {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-dim);
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+
+.nav-link:hover {
+  color: var(--text-white);
+}
+
+.nav-action-wrap {
+  display: flex;
+  align-items: center;
+}
+
+.nav-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+  padding: 6px 14px;
+  border: 1px solid var(--border-hairline);
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.03);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.status-dot-pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--accent-lime);
+  display: inline-block;
+  box-shadow: 0 0 0 2px rgba(212, 247, 84, 0.25);
+  animation: pulseDot 2s infinite ease-in-out;
+}
+
+@keyframes pulseDot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.85); }
+}
+
+/* Floating Sub-Header Badge (Top Right) */
+.sub-header-badge {
+  position: absolute;
+  top: 86px;
+  right: 36px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 260px;
+}
+
+.badge-avatar-pair {
+  display: flex;
+  align-items: center;
+}
+
+.badge-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 2px solid var(--bg-card);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.badge-avatar.doc-avatar {
+  background: #FFFFFF;
+  color: var(--text-dark);
+  z-index: 2;
+}
+
+.badge-avatar.sparkle-avatar {
+  background: var(--accent-lilac);
+  color: #FFFFFF;
+  margin-left: -10px;
+  font-size: 13px;
+  z-index: 1;
+}
+
+.badge-caption {
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--text-dim);
+  font-weight: 500;
+}
+
+/* ==========================================================================
+   Hero Center Stage (Huge Typography & Monogram)
+   ========================================================================== */
+.hero-main-stage {
+  position: relative;
+  z-index: 10;
+  margin-top: 140px;
+  margin-bottom: 30px;
+}
+
+/* Hairline Monogram (M) */
+.hero-monogram-emblem {
+  width: 76px;
+  height: 76px;
+  border: 1.5px solid rgba(255, 255, 255, 0.25);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 24px;
+}
+
+.monogram-letter {
+  font-size: 38px;
+  font-weight: 900;
+  color: rgba(255, 255, 255, 0.45);
+  line-height: 1;
+  transform: translateY(-1px);
+}
+
+.section-kicker {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  margin-bottom: 14px;
+}
+
+.headline-container {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.hero-display-heading {
+  font-size: clamp(2.8rem, 5.2vw, 5.4rem);
+  font-weight: 800;
+  line-height: 1.02;
+  letter-spacing: -0.035em;
+  color: var(--text-white);
+}
+
+/* Lime Action Pill Button (Common Studio Style) */
+.hero-btn-lime {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background-color: var(--accent-lime);
+  color: var(--accent-lime-text);
+  font-size: 13.5px;
+  font-weight: 700;
+  padding: 12px 24px;
+  border-radius: 9999px;
+  text-decoration: none;
+  white-space: nowrap;
+  box-shadow: 0 4px 16px rgba(212, 247, 84, 0.25);
+  transition: transform 0.15s ease, background-color 0.15s ease;
+  margin-bottom: 12px;
+}
+
+.hero-btn-lime:hover {
+  background-color: var(--accent-lime-hover);
+  transform: translateY(-2px);
+}
+
+.arrow-glyph {
+  font-size: 15px;
+  font-weight: 800;
+}
+
+/* ==========================================================================
+   Mid-Section: Editorial Manifesto
+   ========================================================================== */
+.hero-manifesto-stage {
+  position: relative;
+  z-index: 10;
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 30px;
+  padding: 24px 0;
+  border-top: 1px solid var(--border-hairline);
+  margin-bottom: 24px;
+}
+
+.manifesto-left-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lilac-star-glyph {
+  color: var(--accent-lilac);
+  font-size: 32px;
+  line-height: 1;
+}
+
+.kicker-sub {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+.manifesto-paragraph {
+  font-size: 19px;
+  font-weight: 400;
+  line-height: 1.48;
+  color: var(--text-dim);
+  max-width: 680px;
+}
+
+.manifesto-paragraph strong {
+  color: var(--text-white);
+  font-weight: 600;
+}
+
+/* ==========================================================================
+   Bottom Cards Row (Visual Trio)
+   ========================================================================== */
+.hero-bottom-cards {
+  position: relative;
+  z-index: 10;
+  display: grid;
+  grid-template-columns: 1.15fr 0.95fr 1fr;
+  gap: 16px;
+}
+
+.feature-card {
+  border-radius: 20px;
+  padding: 20px 22px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 160px;
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--border-hairline);
+}
+
+/* Card 1: Lilac Protocol Accent */
+.card-lilac {
+  background-color: var(--accent-lilac-card);
+  color: #FFFFFF;
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.card-lilac .card-kicker {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  opacity: 0.85;
+}
+
+.card-bottom-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.card-lilac .card-title {
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.card-badge-symbol {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.16);
+  color: #FFFFFF;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.card-circle-arrow:hover {
+  transform: scale(1.08);
+}
+
+/* Card 2: Minimalist Dark Visual Thumbnail */
+.card-visual {
+  background-color: var(--bg-card-subtle);
+  padding: 16px;
+}
+
+.card-bg-thumbnail {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: brightness(0.85);
+}
+
+.card-thumb-overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to top, rgba(6, 7, 9, 0.85) 0%, transparent 60%);
+}
+
+.card-circle-arrow.top-right {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 2;
+  background: var(--accent-lime);
+}
+
+.card-thumb-label {
+  position: relative;
+  z-index: 2;
+  margin-top: auto;
+  font-size: 13px;
+  font-weight: 700;
+  color: #FFFFFF;
+}
+
+/* Card 3: Metric Stat */
+.card-stat {
+  background-color: var(--bg-card-subtle);
+}
+
+.stat-number {
+  font-size: 52px;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--text-white);
+  letter-spacing: -0.04em;
+}
+
+.stat-unit {
+  font-size: 26px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.stat-caption {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.4;
+  margin-top: 6px;
+}
+
+/* ==========================================================================
+   RIGHT SECONDARY COLUMN (Editorial Quotes, Marquee & Giant Crop)
+   ========================================================================== */
+.hero-canvas-right {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-hairline);
+  border-radius: 28px;
+  padding: 36px 32px 0 32px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  overflow: hidden;
+  position: relative;
+  min-height: 900px;
+}
+
+.kicker-sidebar {
+  margin-bottom: 12px;
+}
+
+.quote-symbol {
+  font-size: 56px;
+  font-weight: 900;
+  line-height: 0.8;
+  color: var(--text-white);
+  margin-bottom: 20px;
+}
+
+.testimonial-body {
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1.44;
+  color: var(--text-white);
+  margin-bottom: 24px;
+}
+
+.testimonial-author {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 32px;
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.author-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--bg-card-subtle);
+  border: 1px solid var(--border-hairline-bright);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent-lilac);
+}
+
+.author-details {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.author-name {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text-white);
+}
+
+.author-role {
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+/* Kinetic Ticker Marquee */
+.ticker-banner {
+  overflow: hidden;
+  white-space: nowrap;
+  padding: 22px 0;
+  border-top: 1px solid var(--border-hairline);
+  border-bottom: 1px solid var(--border-hairline);
+  margin: 12px 0 28px 0;
+}
+
+.ticker-track {
+  display: inline-flex;
+  align-items: center;
+  gap: 16px;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-white);
+  animation: marqueeScroll 24s linear infinite;
+}
+
+.ticker-star {
+  color: var(--accent-lilac);
+  font-size: 18px;
+}
+
+@keyframes marqueeScroll {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+/* Bottom Hospital Call To Action */
+.sidebar-bottom-cta {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  z-index: 5;
+}
+
+.sidebar-cta-heading {
+  font-size: 26px;
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  color: var(--text-white);
+}
+
+.sidebar-launch-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+  padding: 8px 16px;
+  border: 1px solid var(--border-hairline);
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.03);
+  width: fit-content;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* Giant Cropped Wordmark (Common Studio Madness) */
+.giant-cropped-watermark {
+  position: relative;
+  left: -32px;
+  right: -32px;
+  width: calc(100% + 64px);
+  margin-top: 24px;
+  margin-bottom: -28px;
+  pointer-events: none;
+  user-select: none;
+  overflow: hidden;
+}
+
+.giant-cropped-watermark span {
+  font-size: 136px;
+  font-weight: 900;
+  letter-spacing: -0.06em;
+  color: var(--text-white);
+  line-height: 0.72;
+  display: block;
+  opacity: 0.96;
+}
+
+.sidebar-footer-meta {
+  padding: 24px 0 16px 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  position: relative;
+  z-index: 5;
+}
+
+/* ==========================================================================
+   Responsive Adaptations
+   ========================================================================== */
+@media (max-width: 1240px) {
+  .editorial-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .hero-canvas-left,
+  .hero-canvas-right {
+    min-height: auto;
+  }
+
+  .hero-bottom-cards {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 768px) {
+  body.editorial-body {
+    padding: 10px;
+  }
+
+  .hero-canvas-left {
+    padding: 20px 20px 24px 20px;
+    border-radius: 20px;
+  }
+
+  .hero-canvas-right {
+    padding: 24px 20px 0 20px;
+    border-radius: 20px;
+  }
+
+  .nav-links {
+    display: none;
+  }
+
+  .sub-header-badge {
+    position: static;
+    margin: 20px 0 10px 0;
+    max-width: 100%;
+  }
+
+  .hero-main-stage {
+    margin-top: 40px;
+  }
+
+  .hero-display-heading {
+    font-size: 2.5rem;
+  }
+
+  .hero-manifesto-stage {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+
+  .manifesto-paragraph {
+    font-size: 16px;
+  }
+
+  .hero-bottom-cards {
+    grid-template-columns: 1fr;
+  }
+
+  .giant-cropped-watermark span {
+    font-size: 88px;
+  }
+}

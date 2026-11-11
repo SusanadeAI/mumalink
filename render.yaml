@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: mumalink
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        sync: false
+      - key: SENDPULSE_API_ID
+        sync: false
+      - key: SENDPULSE_API_SECRET
+        sync: false
+      - key: SENDPULSE_BOT_ID
+        sync: false
+      - key: INFOBIP_API_KEY
+        sync: false
+      - key: INFOBIP_BASE_URL
+        sync: false
+      - key: INFOBIP_SENDER
+        sync: false

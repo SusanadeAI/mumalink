@@ -1,0 +1,24 @@
+# Dependencies & Environment
+node_modules/
+.env
+*.log
+
+# Local SQLite Databases
+*.db
+database.js
+
+# Internal Documents, Receipts & Previews
+*.pdf
+*.png
+!logo*.png
+!icon*.png
+!favicon*.png
+!public/logo*.png
+!public/icon*.png
+!public/favicon*.png
+generate_cost_estimate_pdf.py
+generate_receipt_pdf.py
+
+# System
+.DS_Store
+Thumbs.db
