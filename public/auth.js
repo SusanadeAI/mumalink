@@ -29,6 +29,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const authSubtitle = document.getElementById('authSubtitle');
   const authAlert = document.getElementById('authAlert');
   const regHospital = document.getElementById('regHospital');
+  const visualTopIsland = document.getElementById('visualTopIsland');
+
+  let activeTenantHospital = null;
+  let activeTenantSubdomain = new URLSearchParams(window.location.search).get('hospital') || '';
 
   const svgEye = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>';
   const svgEyeOff = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>';
@@ -55,9 +59,37 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Load registered hospitals
+  // Load registered hospitals & check subdomain / tenant portal context
+  async function loadTenantContext() {
+    try {
+      const q = activeTenantSubdomain ? `?hospital=${encodeURIComponent(activeTenantSubdomain)}` : '';
+      const res = await fetch(`/api/tenant${q}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data && data.hospital) {
+        activeTenantHospital = data.hospital;
+        activeTenantSubdomain = data.hospital.subdomain || activeTenantSubdomain;
+        if (visualTopIsland) {
+          visualTopIsland.textContent = `${data.hospital.name} • Maternal Portal`;
+        }
+        if (authTitle) {
+          authTitle.textContent = `Sign in to ${data.hospital.name}`;
+        }
+        if (authSubtitle) {
+          authSubtitle.textContent = `Sign in to the ${data.hospital.name} maternal triage workspace.`;
+        }
+        if (regHospital) {
+          regHospital.innerHTML = `<option value="${data.hospital.id}" selected>${data.hospital.name} (${data.hospital.state})</option>`;
+        }
+      }
+    } catch (e) {
+      console.error('Tenant context notice:', e);
+    }
+  }
+
   async function loadHospitals() {
-    if (!regHospital) return;
+    await loadTenantContext();
+    if (!regHospital || activeTenantHospital) return;
     try {
       const res = await fetch('/api/hospitals/public');
       const hospitals = await res.json();
@@ -66,12 +98,9 @@ document.addEventListener('DOMContentLoaded', () => {
           <option value="" disabled selected>Select partner facility...</option>
           ${hospitals.map(h => `<option value="${h.id}">${h.name} (${h.state})</option>`).join('')}
         `;
-      } else {
-        regHospital.innerHTML = `<option value="hosp_ondo_01">Ondo State Mother & Child Specialist Hospital</option>`;
       }
     } catch (e) {
       console.error('Hospital directory fetch error:', e);
-      regHospital.innerHTML = `<option value="hosp_ondo_01">Ondo State Mother & Child Specialist Hospital</option>`;
     }
   }
   loadHospitals();
@@ -83,8 +112,10 @@ document.addEventListener('DOMContentLoaded', () => {
       tabRegister.classList.remove('active');
       signInForm.style.display = 'flex';
       registerForm.style.display = 'none';
-      if (authTitle) authTitle.textContent = 'Welcome back.';
-      if (authSubtitle) authSubtitle.textContent = 'Sign in to your hospital maternity triage stream and patient register.';
+      if (authTitle) authTitle.textContent = activeTenantHospital ? `Sign in to ${activeTenantHospital.name}` : 'Welcome back.';
+      if (authSubtitle) authSubtitle.textContent = activeTenantHospital
+        ? `Sign in to the ${activeTenantHospital.name} maternal triage workspace.`
+        : 'Sign in to your hospital maternity triage stream and patient register.';
       clearAlert();
     });
 
@@ -93,7 +124,7 @@ document.addEventListener('DOMContentLoaded', () => {
       tabSignIn.classList.remove('active');
       registerForm.style.display = 'flex';
       signInForm.style.display = 'none';
-      if (authTitle) authTitle.textContent = 'Join clinical network.';
+      if (authTitle) authTitle.textContent = activeTenantHospital ? `Join ${activeTenantHospital.name}` : 'Join clinical network.';
       if (authSubtitle) authSubtitle.textContent = 'Register as an accredited maternity care provider for your hospital.';
       clearAlert();
     });
@@ -117,7 +148,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const res = await fetch('/api/auth/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, password })
+          body: JSON.stringify({ email, password, subdomain: activeTenantSubdomain || undefined })
         });
 
         const data = await res.json();

@@ -484,18 +484,21 @@ async function loadDashboardStats() {
     const res = await authFetch(`/api/stats${query}`);
     const data = await res.json();
 
+    const navAdminConsole = document.getElementById('navAdminConsole');
     if (data.is_super_admin) {
       isSuperAdmin = true;
       if (superAdminPill) superAdminPill.style.display = 'inline-block';
       if (openAddHospitalBtn) openAddHospitalBtn.style.display = 'inline-flex';
       if (hospitalContextSelector) hospitalContextSelector.style.display = 'inline-block';
       if (enrollHospitalGroup) enrollHospitalGroup.style.display = 'block';
+      if (navAdminConsole) navAdminConsole.style.display = 'flex';
     } else {
       isSuperAdmin = false;
       if (superAdminPill) superAdminPill.style.display = 'none';
       if (openAddHospitalBtn) openAddHospitalBtn.style.display = 'none';
       if (hospitalContextSelector) hospitalContextSelector.style.display = 'none';
       if (enrollHospitalGroup) enrollHospitalGroup.style.display = 'none';
+      if (navAdminConsole) navAdminConsole.style.display = 'none';
     }
 
     if (hospitalNameDisplay) {
@@ -1208,6 +1211,8 @@ async function loadNotifications() {
 async function loadHospitalSettings() {
   const nameEl = document.getElementById('settingsHospitalName');
   const codeEl = document.getElementById('settingsHospitalCode');
+  const subEl = document.getElementById('settingsHospitalSubdomain');
+  const subPreviewEl = document.getElementById('settingsSubdomainPreview');
   const stateEl = document.getElementById('settingsHospitalState');
   const phoneEl = document.getElementById('settingsHospitalPhone');
   const emailEl = document.getElementById('settingsHospitalEmail');
@@ -1228,11 +1233,15 @@ async function loadHospitalSettings() {
     const h = data.hospital;
     if (nameEl) nameEl.value = h.name || '';
     if (codeEl) codeEl.value = h.id || '';
+    if (subEl) subEl.value = h.subdomain || '';
+    if (subPreviewEl) {
+      subPreviewEl.textContent = h.subdomain ? `https://${h.subdomain}.mumalink.com` : '';
+    }
     if (stateEl) stateEl.value = h.state || '';
     if (phoneEl) phoneEl.value = h.phone || '';
     if (emailEl) emailEl.value = h.contact_email || '';
     if (windowEl) windowEl.value = data.surveillance_window || '42 Days Post-Discharge (WHO Standard)';
-    if (gatewayEl) gatewayEl.value = data.whatsapp_gateway || 'Infobip WhatsApp Business API';
+    if (gatewayEl) gatewayEl.value = data.whatsapp_gateway || 'Active';
     if (saveBtn) saveBtn.disabled = !data.can_edit;
   } catch (err) {
     console.error('Load hospital settings error:', err);
@@ -1244,6 +1253,7 @@ async function handleSaveHospitalSettings(e) {
   e.preventDefault();
   const hospital_id = document.getElementById('settingsHospitalCode')?.value;
   const name = document.getElementById('settingsHospitalName')?.value?.trim();
+  const subdomain = document.getElementById('settingsHospitalSubdomain')?.value?.trim();
   const state = document.getElementById('settingsHospitalState')?.value?.trim();
   const phone = document.getElementById('settingsHospitalPhone')?.value?.trim();
   const contact_email = document.getElementById('settingsHospitalEmail')?.value?.trim();
@@ -1251,10 +1261,14 @@ async function handleSaveHospitalSettings(e) {
   try {
     const res = await authFetch('/api/hospital-settings', {
       method: 'PUT',
-      body: JSON.stringify({ hospital_id, name, state, phone, contact_email })
+      body: JSON.stringify({ hospital_id, name, subdomain, state, phone, contact_email })
     });
     const data = await res.json();
     if (data.success) {
+      const subPreviewEl = document.getElementById('settingsSubdomainPreview');
+      if (subPreviewEl && data.hospital?.subdomain) {
+        subPreviewEl.textContent = `https://${data.hospital.subdomain}.mumalink.com`;
+      }
       showToast('Hospital facility profile saved to PostgreSQL.');
       await loadHospitalsList();
       await loadDashboardStats();
@@ -1271,6 +1285,7 @@ async function handleAddHospitalSubmit(e) {
   e.preventDefault();
 
   const name = document.getElementById('newHospitalName').value;
+  const subdomain = document.getElementById('newHospitalSubdomain')?.value?.trim();
   const state = document.getElementById('newHospitalState').value;
   const phone = document.getElementById('newHospitalPhone').value;
   const contact_email = document.getElementById('newHospitalEmail').value;
@@ -1278,7 +1293,7 @@ async function handleAddHospitalSubmit(e) {
   try {
     const res = await authFetch('/api/hospitals', {
       method: 'POST',
-      body: JSON.stringify({ name, state, phone, contact_email })
+      body: JSON.stringify({ name, subdomain, state, phone, contact_email })
     });
 
     const data = await res.json();

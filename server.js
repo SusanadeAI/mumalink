@@ -232,10 +232,62 @@ const EPDS_QUESTIONS = [
 ];
 
 // =============================================================================
-// PAGE ROUTING
+// PAGE ROUTING & PER-HOSPITAL SUBDOMAINS (hospital1.mumalink.com)
 // =============================================================================
-app.get('/', (req, res) => {
+const RESERVED_SUBDOMAINS = new Set(['www', 'admin', 'api', 'app', 'mail', 'ftp']);
+
+function sanitizeSubdomain(raw) {
+  return String(raw || '')
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9-]/g, '')
+    .replace(/^-+|-+$/g, '');
+}
+
+function extractSubdomain(req) {
+  const rawHost = String(req.headers['x-forwarded-host'] || req.headers.host || req.hostname || '')
+    .split(',')[0]
+    .trim()
+    .toLowerCase()
+    .split(':')[0];
+  if (!rawHost) return null;
+
+  if (rawHost.endsWith('.mumalink.com')) {
+    const sub = rawHost.slice(0, -'.mumalink.com'.length);
+    if (sub && sub !== 'www') return sub;
+  }
+  if (rawHost.endsWith('.localhost')) {
+    const sub = rawHost.slice(0, -'.localhost'.length);
+    if (sub && sub !== 'www') return sub;
+  }
+  return null;
+}
+
+app.get('/', async (req, res) => {
+  try {
+    const sub = extractSubdomain(req);
+    if (sub === 'admin') {
+      return res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+    }
+    if (sub) {
+      const { rows } = await pool.query('SELECT id FROM hospitals WHERE LOWER(subdomain) = LOWER($1) LIMIT 1', [sub]);
+      if (rows.length > 0) {
+        return res.sendFile(path.join(__dirname, 'public', 'login.html'));
+      }
+    }
+  } catch (err) {
+    console.error('Root tenant routing notice:', err.message);
+  }
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+app.get('/admin', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+});
+
+app.get('/h/:subdomain', (req, res) => {
+  const slug = sanitizeSubdomain(req.params.subdomain);
+  res.redirect(`/login?hospital=${encodeURIComponent(slug)}`);
 });
 
 app.get(['/login', '/signup', '/register', '/auth'], (req, res) => {
@@ -244,6 +296,27 @@ app.get(['/login', '/signup', '/register', '/auth'], (req, res) => {
 
 app.get('/dashboard', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
+});
+
+// Subdomain / Hospital Tenant Context Lookup
+app.get('/api/tenant', async (req, res) => {
+  try {
+    const slug = sanitizeSubdomain(req.query.hospital || extractSubdomain(req));
+    if (!slug || RESERVED_SUBDOMAINS.has(slug)) {
+      return res.json({ is_subdomain: false, subdomain: null, hospital: null });
+    }
+    const { rows } = await pool.query(
+      'SELECT id, name, subdomain, state, phone, contact_email FROM hospitals WHERE LOWER(subdomain) = LOWER($1) LIMIT 1',
+      [slug]
+    );
+    res.json({
+      is_subdomain: rows.length > 0,
+      subdomain: slug,
+      hospital: rows[0] || null
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // =============================================================================
@@ -268,7 +341,7 @@ function authenticateToken(req, res, next) {
 // CLINICIAN AUTH API
 // =============================================================================
 app.post('/api/auth/login', async (req, res) => {
-  const { email, password } = req.body;
+  const { email, password, subdomain } = req.body;
 
   if (!email || !password) {
     return res.status(400).json({ error: 'Email and password are required.' });
@@ -276,7 +349,7 @@ app.post('/api/auth/login', async (req, res) => {
 
   try {
     const { rows } = await pool.query(`
-      SELECT c.*, h.name as hospital_name 
+      SELECT c.*, h.name as hospital_name, h.subdomain as hospital_subdomain
       FROM clinicians c
       JOIN hospitals h ON c.hospital_id = h.id
       WHERE LOWER(c.email) = LOWER($1)
@@ -292,11 +365,25 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid password credentials.' });
     }
 
+    const activeSlug = sanitizeSubdomain(subdomain || extractSubdomain(req));
+    if (activeSlug && !RESERVED_SUBDOMAINS.has(activeSlug)) {
+      const { rows: hospRows } = await pool.query(
+        'SELECT id, name FROM hospitals WHERE LOWER(subdomain) = LOWER($1) LIMIT 1',
+        [activeSlug]
+      );
+      if (hospRows.length > 0 && clinician.hospital_id !== hospRows[0].id && clinician.role !== 'Super Admin') {
+        return res.status(403).json({
+          error: `This clinician account belongs to ${clinician.hospital_name}, not ${hospRows[0].name}.`
+        });
+      }
+    }
+
     const token = jwt.sign(
       {
         id: clinician.id,
         hospital_id: clinician.hospital_id,
         hospital_name: clinician.hospital_name,
+        hospital_subdomain: clinician.hospital_subdomain,
         full_name: clinician.full_name,
         email: clinician.email,
         role: clinician.role
@@ -312,6 +399,7 @@ app.post('/api/auth/login', async (req, res) => {
         id: clinician.id,
         hospital_id: clinician.hospital_id,
         hospital_name: clinician.hospital_name,
+        hospital_subdomain: clinician.hospital_subdomain,
         full_name: clinician.full_name,
         email: clinician.email,
         role: clinician.role
@@ -377,7 +465,7 @@ app.post('/api/auth/register', async (req, res) => {
 app.get('/api/auth/me', authenticateToken, async (req, res) => {
   try {
     const { rows } = await pool.query(`
-      SELECT c.id, c.hospital_id, c.full_name, c.email, c.role, h.name as hospital_name
+      SELECT c.id, c.hospital_id, c.full_name, c.email, c.role, h.name as hospital_name, h.subdomain as hospital_subdomain
       FROM clinicians c
       JOIN hospitals h ON c.hospital_id = h.id
       WHERE c.id = $1
@@ -392,7 +480,7 @@ app.get('/api/auth/me', authenticateToken, async (req, res) => {
 // Public List of Partner Hospitals (For Clinician Registration dropdown)
 app.get('/api/hospitals/public', async (req, res) => {
   try {
-    const { rows } = await pool.query('SELECT id, name, state FROM hospitals ORDER BY name ASC');
+    const { rows } = await pool.query('SELECT id, name, subdomain, state FROM hospitals ORDER BY name ASC');
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -419,25 +507,114 @@ app.get('/api/hospitals', authenticateToken, async (req, res) => {
   }
 });
 
-// Register New Partner Hospital (Super Admin only)
-app.post('/api/hospitals', authenticateToken, async (req, res) => {
+// Register New Partner Hospital + Optional Initial Clinician Login (Super Admin only)
+async function handleCreateHospital(req, res) {
   if (req.user.role !== 'Super Admin') {
     return res.status(403).json({ error: 'Only Super Administrators can onboard new healthcare facilities.' });
   }
 
-  const { name, state, contact_email, phone } = req.body;
-  if (!name || !state) {
+  const { name, subdomain, state, contact_email, phone, admin_name, admin_email, admin_password } = req.body;
+  if (!name || !name.trim() || !state || !state.trim()) {
     return res.status(400).json({ error: 'Hospital name and state are required.' });
+  }
+
+  const slug = sanitizeSubdomain(subdomain || name.trim().replace(/\s+/g, '-').slice(0, 24));
+  if (!slug || RESERVED_SUBDOMAINS.has(slug)) {
+    return res.status(400).json({ error: 'Please provide a valid subdomain slug (e.g. hospital1).' });
+  }
+
+  if (admin_email && !admin_password) {
+    return res.status(400).json({ error: 'Please enter a password for the initial hospital clinician account.' });
   }
 
   const id = 'hosp_' + Date.now().toString(36);
   try {
+    const dupSub = await pool.query('SELECT id FROM hospitals WHERE LOWER(subdomain) = LOWER($1) LIMIT 1', [slug]);
+    if (dupSub.rows.length > 0) {
+      return res.status(400).json({ error: `The subdomain "${slug}.mumalink.com" is already assigned to another hospital.` });
+    }
+
+    if (admin_email && admin_email.trim()) {
+      const dupDoc = await pool.query('SELECT id FROM clinicians WHERE LOWER(email) = LOWER($1) LIMIT 1', [admin_email.trim()]);
+      if (dupDoc.rows.length > 0) {
+        return res.status(400).json({ error: `A clinician account with email "${admin_email.trim()}" already exists.` });
+      }
+    }
+
     const { rows } = await pool.query(`
-      INSERT INTO hospitals (id, name, state, contact_email, phone)
-      VALUES ($1, $2, $3, $4, $5)
+      INSERT INTO hospitals (id, name, subdomain, state, contact_email, phone)
+      VALUES ($1, $2, $3, $4, $5, $6)
       RETURNING *
-    `, [id, name.trim(), state.trim(), contact_email?.trim() || null, phone?.trim() || null]);
-    res.json({ success: true, hospital: rows[0] });
+    `, [id, name.trim(), slug, state.trim(), contact_email?.trim() || null, phone?.trim() || null]);
+
+    let clinicianCreated = null;
+    if (admin_email && admin_email.trim() && admin_password) {
+      const docId = 'doc_' + Date.now().toString(36);
+      const passwordHash = await bcrypt.hash(admin_password, 10);
+      const clinicianName = (admin_name && admin_name.trim()) ? admin_name.trim() : `${name.trim()} Lead Clinician`;
+      const docRes = await pool.query(`
+        INSERT INTO clinicians (id, hospital_id, full_name, email, password_hash, role)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING id, full_name, email, role, hospital_id
+      `, [docId, id, clinicianName, admin_email.trim(), passwordHash, 'Hospital Lead Clinician']);
+      clinicianCreated = docRes.rows[0];
+    }
+
+    res.json({ success: true, hospital: rows[0], clinician: clinicianCreated });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+app.post('/api/hospitals', authenticateToken, handleCreateHospital);
+app.post('/api/admin/hospitals', authenticateToken, handleCreateHospital);
+
+// Create or Update Clinician Login for a Hospital (Super Admin only)
+app.post('/api/admin/clinicians', authenticateToken, async (req, res) => {
+  if (req.user.role !== 'Super Admin') {
+    return res.status(403).json({ error: 'Only Super Administrators can manage hospital logins.' });
+  }
+
+  const { full_name, email, password, role, hospital_id } = req.body;
+  if (!full_name || !full_name.trim() || !email || !email.trim() || !hospital_id) {
+    return res.status(400).json({ error: 'Full name, email, and target hospital are required.' });
+  }
+
+  try {
+    const existing = await pool.query('SELECT id FROM clinicians WHERE LOWER(email) = LOWER($1) LIMIT 1', [email.trim()]);
+    if (existing.rows.length > 0) {
+      if (password && password.trim()) {
+        const passwordHash = await bcrypt.hash(password, 10);
+        const { rows } = await pool.query(`
+          UPDATE clinicians
+          SET full_name = $1, hospital_id = $2, role = $3, password_hash = $4
+          WHERE id = $5
+          RETURNING id, full_name, email, role, hospital_id
+        `, [full_name.trim(), hospital_id, role || 'Hospital Lead Clinician', passwordHash, existing.rows[0].id]);
+        return res.json({ success: true, clinician: rows[0], updated: true });
+      }
+      const { rows } = await pool.query(`
+        UPDATE clinicians
+        SET full_name = $1, hospital_id = $2, role = $3
+        WHERE id = $4
+        RETURNING id, full_name, email, role, hospital_id
+      `, [full_name.trim(), hospital_id, role || 'Hospital Lead Clinician', existing.rows[0].id]);
+      return res.json({ success: true, clinician: rows[0], updated: true });
+    }
+
+    if (!password || password.length < 6) {
+      return res.status(400).json({ error: 'Password (minimum 6 characters) is required for new accounts.' });
+    }
+
+    const id = 'doc_' + Date.now().toString(36);
+    const passwordHash = await bcrypt.hash(password, 10);
+    const { rows } = await pool.query(`
+      INSERT INTO clinicians (id, hospital_id, full_name, email, password_hash, role)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      RETURNING id, full_name, email, role, hospital_id
+    `, [id, hospital_id, full_name.trim(), email.trim(), passwordHash, role || 'Hospital Lead Clinician']);
+
+    res.json({ success: true, clinician: rows[0], updated: false });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -694,9 +871,12 @@ app.get('/api/hospital-settings', authenticateToken, async (req, res) => {
     }
 
     const senderNum = String(process.env.INFOBIP_SENDER || '2348138048129').replace(/[^\d]/g, '');
+    const formattedSender = senderNum.startsWith('234') && senderNum.length === 13
+      ? `+234 ${senderNum.slice(3, 6)} ${senderNum.slice(6, 9)} ${senderNum.slice(9)}`
+      : `+${senderNum}`;
     const whatsapp_gateway = infobip.isConfigured()
-      ? `Connected • Infobip WhatsApp Business API (+${senderNum})`
-      : 'Infobip API Key Missing';
+      ? `${formattedSender} • Active`
+      : 'WhatsApp Line Inactive';
 
     res.json({
       hospital: rows[0],
@@ -712,7 +892,7 @@ app.get('/api/hospital-settings', authenticateToken, async (req, res) => {
 
 app.put('/api/hospital-settings', authenticateToken, async (req, res) => {
   const isSuperAdmin = req.user.role === 'Super Admin';
-  const { hospital_id, name, state, phone, contact_email } = req.body;
+  const { hospital_id, name, subdomain, state, phone, contact_email } = req.body;
   const targetHospitalId = (isSuperAdmin && hospital_id && hospital_id !== 'all') ? hospital_id : req.user.hospital_id;
 
   if (!isSuperAdmin && targetHospitalId !== req.user.hospital_id) {
@@ -723,13 +903,28 @@ app.put('/api/hospital-settings', authenticateToken, async (req, res) => {
     return res.status(400).json({ error: 'Hospital name and state are required.' });
   }
 
+  const cleanSub = subdomain ? sanitizeSubdomain(subdomain) : null;
+  if (cleanSub && RESERVED_SUBDOMAINS.has(cleanSub)) {
+    return res.status(400).json({ error: 'That subdomain name is reserved.' });
+  }
+
   try {
+    if (cleanSub) {
+      const dup = await pool.query(
+        'SELECT id FROM hospitals WHERE LOWER(subdomain) = LOWER($1) AND id <> $2 LIMIT 1',
+        [cleanSub, targetHospitalId]
+      );
+      if (dup.rows.length > 0) {
+        return res.status(400).json({ error: `Subdomain "${cleanSub}.mumalink.com" is already in use.` });
+      }
+    }
+
     const { rows } = await pool.query(`
       UPDATE hospitals
-      SET name = $1, state = $2, phone = $3, contact_email = $4
-      WHERE id = $5
+      SET name = $1, state = $2, phone = $3, contact_email = $4, subdomain = COALESCE($5, subdomain)
+      WHERE id = $6
       RETURNING *
-    `, [name.trim(), state.trim(), phone ? phone.trim() : null, contact_email ? contact_email.trim() : null, targetHospitalId]);
+    `, [name.trim(), state.trim(), phone ? phone.trim() : null, contact_email ? contact_email.trim() : null, cleanSub, targetHospitalId]);
 
     if (rows.length === 0) {
       return res.status(404).json({ error: 'Hospital record not found.' });

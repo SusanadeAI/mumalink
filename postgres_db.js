@@ -22,11 +22,13 @@ async function initPostgresDatabase() {
       CREATE TABLE IF NOT EXISTS hospitals (
         id VARCHAR(64) PRIMARY KEY,
         name VARCHAR(255) NOT NULL,
+        subdomain VARCHAR(100) UNIQUE,
         state VARCHAR(100) NOT NULL,
         contact_email VARCHAR(255),
         phone VARCHAR(50),
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
       );
+      ALTER TABLE hospitals ADD COLUMN IF NOT EXISTS subdomain VARCHAR(100) UNIQUE;
     `);
 
     // 2. Clinicians / Doctors (with authentication credentials)
@@ -139,6 +141,25 @@ async function initPostgresDatabase() {
 
     console.log('PostgreSQL schema verified and ready.');
 
+    // Backfill default subdomains for seeded hospitals without overwriting custom edits
+    const defaultSubdomains = [
+      ['hosp_ondo_01', 'akure'],
+      ['hosp_ondo_02', 'ikare'],
+      ['hosp_ondo_03', 'ondocity'],
+      ['hosp_ondo_04', 'owo']
+    ];
+    for (const [hospId, slug] of defaultSubdomains) {
+      await client.query(
+        "UPDATE hospitals SET subdomain = $2 WHERE id = $1 AND (subdomain IS NULL OR subdomain = '')",
+        [hospId, slug]
+      );
+    }
+
+    // Ensure primary owner account has Super Admin privileges
+    await client.query(
+      "UPDATE clinicians SET role = 'Super Admin' WHERE LOWER(email) = 'susanadefinance@gmail.com'"
+    );
+
     // Seed default records if empty
     const { rows } = await client.query('SELECT COUNT(*) as count FROM hospitals');
     if (parseInt(rows[0].count, 10) === 0) {
@@ -158,18 +179,18 @@ async function seedPostgresData(client) {
 
   // 1. Partner Hospitals across Ondo State Healthcare Network
   const hospitals = [
-    ['hosp_ondo_01', 'Ondo State Mother & Child Specialist Hospital (Akure)', 'Ondo State', 'akure-mch@mumalink.com', '+234 803 123 4567'],
-    ['hosp_ondo_02', 'State Specialist Hospital (Ikare-Akoko)', 'Ondo State', 'ikare-ssh@mumalink.com', '+234 803 234 5678'],
-    ['hosp_ondo_03', 'Mother & Child Hospital (Ondo City)', 'Ondo State', 'ondocity-mch@mumalink.com', '+234 803 345 6789'],
-    ['hosp_ondo_04', 'General Hospital (Owo)', 'Ondo State', 'owo-gh@mumalink.com', '+234 803 456 7890']
+    ['hosp_ondo_01', 'Ondo State Mother & Child Specialist Hospital (Akure)', 'akure', 'Ondo State', 'akure-mch@mumalink.com', '+234 803 123 4567'],
+    ['hosp_ondo_02', 'State Specialist Hospital (Ikare-Akoko)', 'ikare', 'Ondo State', 'ikare-ssh@mumalink.com', '+234 803 234 5678'],
+    ['hosp_ondo_03', 'Mother & Child Hospital (Ondo City)', 'ondocity', 'Ondo State', 'ondocity-mch@mumalink.com', '+234 803 345 6789'],
+    ['hosp_ondo_04', 'General Hospital (Owo)', 'owo', 'Ondo State', 'owo-gh@mumalink.com', '+234 803 456 7890']
   ];
 
-  for (const [id, name, state, email, phone] of hospitals) {
+  for (const [id, name, subdomain, state, email, phone] of hospitals) {
     await client.query(`
-      INSERT INTO hospitals (id, name, state, contact_email, phone)
-      VALUES ($1, $2, $3, $4, $5)
-      ON CONFLICT (id) DO UPDATE SET name = $2, state = $3, contact_email = $4, phone = $5;
-    `, [id, name, state, email, phone]);
+      INSERT INTO hospitals (id, name, subdomain, state, contact_email, phone)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      ON CONFLICT (id) DO UPDATE SET name = $2, subdomain = COALESCE(hospitals.subdomain, $3), state = $4, contact_email = $5, phone = $6;
+    `, [id, name, subdomain, state, email, phone]);
   }
 
   // 2. Default Clinician: doctor@mumalink.com / Password123!
