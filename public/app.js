@@ -160,6 +160,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Live profile synchronization with backend
   try {
     const meRes = await authFetch('/api/auth/me');
+    if (meRes.status === 403) {
+      localStorage.removeItem('mumalink_token');
+      localStorage.removeItem('mumalink_clinician');
+      window.location.href = '/login';
+      return;
+    }
     if (meRes.ok) {
       const liveClinician = await meRes.json();
       localStorage.setItem('mumalink_clinician', JSON.stringify(liveClinician));
@@ -167,6 +173,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   } catch (err) {
     console.error('Clinician profile sync notice:', err);
+  }
+
+  // Scope dashboard automatically when opened on a clinic subdomain
+  try {
+    const tenantRes = await fetch('/api/tenant');
+    if (tenantRes.ok) {
+      const tenantData = await tenantRes.json();
+      if (tenantData && tenantData.hospital) {
+        activeHospitalId = tenantData.hospital.id;
+        document.title = `${tenantData.hospital.name} • MumaLINK Triage Portal`;
+      }
+    }
+  } catch (err) {
+    console.error('Tenant scope notice:', err);
   }
 
   setupEventListeners();
@@ -1478,7 +1498,10 @@ async function handleAddHospitalSubmit(e) {
       if (subUrlEl) subUrlEl.textContent = subdomainUrl;
       if (directUrlEl) directUrlEl.textContent = directUrl;
       if (adminEmailEl) adminEmailEl.textContent = createdAdminEmail;
-      if (portalLinkEl) portalLinkEl.href = `/h/${createdSlug}`;
+      if (portalLinkEl) {
+        const isProdMumaHost = window.location.hostname === 'mumalink.com' || window.location.hostname.endsWith('.mumalink.com');
+        portalLinkEl.href = isProdMumaHost ? subdomainUrl : `/h/${createdSlug}`;
+      }
 
       if (addHospitalForm) addHospitalForm.style.display = 'none';
       if (clinicLiveSuccessView) clinicLiveSuccessView.style.display = '';

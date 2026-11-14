@@ -64,6 +64,12 @@ document.addEventListener('DOMContentLoaded', () => {
         if (authSubtitle) {
           authSubtitle.textContent = `Authorized personnel portal for ${data.hospital.name}.`;
         }
+        document.title = `${data.hospital.name} • MumaLINK Clinician Sign In`;
+      } else if (data && data.subdomain && !data.hospital) {
+        if (visualTopIsland) {
+          visualTopIsland.textContent = `${data.subdomain}.mumalink.com`;
+        }
+        showAlert(`No clinic workspace is registered for ${data.subdomain}.mumalink.com.`, 'error');
       }
     } catch (e) {
       console.error('Tenant context notice:', e);

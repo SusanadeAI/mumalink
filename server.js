@@ -100,6 +100,7 @@ function parseMoodSelection(incomingText) {
 }
 
 const app = express();
+app.set('trust proxy', true);
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'mumalink_secure_jwt_secret_key_2026';
 
@@ -107,8 +108,8 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Serve static frontend assets
-app.use(express.static(path.join(__dirname, 'public')));
+// Serve static frontend assets (disable auto index.html so root '/' handles subdomain tenant routing)
+app.use(express.static(path.join(__dirname, 'public'), { index: false }));
 
 // Initialize Render PostgreSQL tables & seed data
 initPostgresDatabase()
@@ -389,11 +390,8 @@ app.get('/', async (req, res) => {
     if (sub === 'admin') {
       return res.sendFile(path.join(__dirname, 'public', 'admin.html'));
     }
-    if (sub) {
-      const { rows } = await pool.query('SELECT id FROM hospitals WHERE LOWER(subdomain) = LOWER($1) LIMIT 1', [sub]);
-      if (rows.length > 0) {
-        return res.sendFile(path.join(__dirname, 'public', 'login.html'));
-      }
+    if (sub && !RESERVED_SUBDOMAINS.has(sub)) {
+      return res.sendFile(path.join(__dirname, 'public', 'login.html'));
     }
   } catch (err) {
     console.error('Root tenant routing notice:', err.message);
@@ -407,6 +405,14 @@ app.get('/admin', (req, res) => {
 
 app.get('/h/:subdomain', (req, res) => {
   const slug = sanitizeSubdomain(req.params.subdomain);
+  const rawHost = String(req.headers['x-forwarded-host'] || req.headers.host || '')
+    .split(',')[0]
+    .trim()
+    .toLowerCase()
+    .split(':')[0];
+  if (slug && (rawHost === 'mumalink.com' || rawHost.endsWith('.mumalink.com'))) {
+    return res.redirect(302, `https://${slug}.mumalink.com`);
+  }
   res.redirect(`/login?hospital=${encodeURIComponent(slug)}`);
 });
 
@@ -551,7 +557,22 @@ app.get('/api/auth/me', authenticateToken, async (req, res) => {
       WHERE c.id = $1
     `, [req.user.id]);
     if (rows.length === 0) return res.status(404).json({ error: 'Clinician not found' });
-    res.json(rows[0]);
+
+    const clinician = rows[0];
+    const activeSlug = sanitizeSubdomain(req.query.hospital || extractSubdomain(req));
+    if (activeSlug && !RESERVED_SUBDOMAINS.has(activeSlug)) {
+      const { rows: hospRows } = await pool.query(
+        'SELECT id, name FROM hospitals WHERE LOWER(subdomain) = LOWER($1) LIMIT 1',
+        [activeSlug]
+      );
+      if (hospRows.length > 0 && clinician.hospital_id !== hospRows[0].id && clinician.role !== 'Super Admin') {
+        return res.status(403).json({
+          error: `This clinician account belongs to ${clinician.hospital_name}, not ${hospRows[0].name}.`
+        });
+      }
+    }
+
+    res.json(clinician);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -669,7 +690,7 @@ async function handleCreateHospital(req, res) {
         subtitle: `Your clinic workspace has been created on MumaLINK. Authorized team members can sign in right away using your dedicated clinic portal link below.`,
         rows: emailRows,
         ctaLabel: 'Open Clinic Login Portal',
-        ctaUrl: directPortalUrl
+        ctaUrl: portalSubdomainUrl
       })
     });
 
@@ -715,7 +736,7 @@ async function sendClinicianAccessEmail({ clinician, hospital, passwordProvided,
         { label: 'Direct Login Link', value: directUrl }
       ],
       ctaLabel: 'Sign In to Clinic Portal',
-      ctaUrl: directUrl
+      ctaUrl: portalUrl
     })
   });
 }

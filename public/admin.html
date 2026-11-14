@@ -899,7 +899,7 @@
     </section>
 
     <div class="notice-bar">
-      Each clinic gets a dedicated login portal on its subdomain (for example <strong>hospital1.mumalink.com</strong>) and direct path (<strong>https://mumalink.com/h/hospital1</strong>). Note: for <code>*.mumalink.com</code> browser links to resolve externally, ensure a wildcard DNS CNAME/A record for <code>*</code> points to your Render service alongside custom domain <code>*.mumalink.com</code> in Render Settings.
+      Wildcard portals active on <strong>*.mumalink.com</strong>: every clinic automatically goes live on <strong>https://&lt;slug&gt;.mumalink.com</strong> (e.g. <strong>akure.mumalink.com</strong>), and this console is also accessible at <strong>https://admin.mumalink.com</strong>.
     </div>
 
     <!-- Section 1: Registered Partner Hospitals -->
@@ -1399,10 +1399,12 @@
         return;
       }
 
+      const isProdMumaHost = window.location.hostname === 'mumalink.com' || window.location.hostname.endsWith('.mumalink.com');
       tbody.innerHTML = hospitals.map(h => {
         const sub = h.subdomain ? `${h.subdomain}.mumalink.com` : 'Not set';
         const subHref = h.subdomain ? `https://${h.subdomain}.mumalink.com` : '#';
         const fallbackPath = h.subdomain ? `/h/${h.subdomain}` : '/login';
+        const openHref = h.subdomain ? (isProdMumaHost ? subHref : fallbackPath) : '/login';
         return `
           <tr>
             <td>
@@ -1423,7 +1425,7 @@
             <td><span class="pill-stat">${parseInt(h.clinicians_count, 10) || 0}</span></td>
             <td>
               <div style="display: flex; gap: 6px; flex-wrap: wrap;">
-                ${h.subdomain ? `<a class="btn btn-sm" href="${escapeHtml(fallbackPath)}" target="_blank" rel="noopener">Open Login</a>` : ''}
+                ${h.subdomain ? `<a class="btn btn-sm" href="${escapeHtml(openHref)}" target="_blank" rel="noopener">Open Login</a>` : ''}
                 <button type="button" class="btn btn-sm" onclick="prefillHospitalLogin('${escapeHtml(h.id)}')">Add Login</button>
               </div>
             </td>
@@ -1703,11 +1705,12 @@
           const portalUrl = `https://${createdSlug}.mumalink.com`;
           const directUrl = `${window.location.origin}/h/${createdSlug}`;
 
+          const isProdMumaHost = window.location.hostname === 'mumalink.com' || window.location.hostname.endsWith('.mumalink.com');
           document.getElementById('adminLiveClinicName').textContent = data.hospital?.name || payload.name;
           document.getElementById('adminLiveSubdomainUrl').textContent = portalUrl;
           document.getElementById('adminLiveDirectUrl').textContent = directUrl;
           document.getElementById('adminLiveEmail').textContent = data.clinician?.email || payload.admin_email;
-          document.getElementById('adminOpenLoginLink').href = `/h/${createdSlug}`;
+          document.getElementById('adminOpenLoginLink').href = isProdMumaHost ? portalUrl : `/h/${createdSlug}`;
 
           document.getElementById('createHospitalForm').style.display = 'none';
           document.getElementById('adminClinicLiveView').style.display = 'block';
