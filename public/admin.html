@@ -338,6 +338,169 @@
       color: var(--ink-700);
     }
 
+    .hero-setup-bar {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 20px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    /* Clinic Setup Modal */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.56);
+      backdrop-filter: blur(2px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      z-index: 50;
+    }
+
+    .modal-overlay.active {
+      display: flex;
+    }
+
+    .modal-card {
+      width: 100%;
+      max-width: 600px;
+      max-height: 92vh;
+      overflow-y: auto;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      box-shadow: 0 24px 48px rgba(15, 23, 42, 0.18);
+    }
+
+    .modal-header {
+      padding: 18px 22px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .modal-title {
+      font-size: 17px;
+      font-weight: 700;
+      color: var(--ink-900);
+    }
+
+    .modal-subtitle {
+      font-size: 13px;
+      color: var(--ink-500);
+      margin-top: 2px;
+    }
+
+    .modal-close {
+      border: 1px solid var(--border);
+      background: #FFFFFF;
+      color: var(--ink-700);
+      width: 30px;
+      height: 30px;
+      border-radius: 8px;
+      font-size: 16px;
+      line-height: 1;
+      cursor: pointer;
+    }
+
+    .modal-close:hover {
+      background: #F1F5F9;
+    }
+
+    .modal-body {
+      padding: 20px 22px;
+    }
+
+    .modal-footer {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-top: 18px;
+      padding-top: 14px;
+      border-top: 1px solid var(--border);
+      flex-wrap: wrap;
+    }
+
+    .live-banner {
+      background: var(--success-bg);
+      border: 1px solid var(--success-border);
+      border-radius: 12px;
+      padding: 18px;
+      margin-bottom: 16px;
+    }
+
+    .live-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 10px;
+      border-radius: 9999px;
+      background: #DCFCE7;
+      color: var(--success-text);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+    }
+
+    .live-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #16A34A;
+    }
+
+    .link-card {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: #F8FAFC;
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .link-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .link-row + .link-row {
+      border-top: 1px solid var(--border);
+      padding-top: 10px;
+    }
+
+    .link-label {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--ink-500);
+      margin-bottom: 2px;
+    }
+
+    .link-value {
+      font-family: var(--font-mono);
+      font-size: 12.5px;
+      font-weight: 600;
+      color: var(--ink-900);
+      word-break: break-all;
+    }
+
     @media (max-width: 820px) {
       .grid-2, .grid-3 {
         grid-template-columns: 1fr;
@@ -361,6 +524,7 @@
     </a>
     <div class="topbar-actions" id="topbarActions" style="display: none;">
       <span style="font-size: 12.5px; color: var(--ink-500);" id="adminIdentityLabel"></span>
+      <button type="button" id="topbarSetupClinicBtn" class="btn btn-primary">+ Set Up New Clinic</button>
       <a href="/dashboard" class="btn">Triage Dashboard</a>
       <button type="button" id="adminSignOutBtn" class="btn">Sign Out</button>
     </div>
@@ -395,76 +559,24 @@
   <!-- Authenticated Super Admin Workspace -->
   <main id="adminWorkspace" class="admin-container" style="display: none;">
 
-    <div class="notice-bar">
-      Each hospital gets a dedicated login portal on its subdomain (for example <strong>hospital1.mumalink.com</strong>) and direct path (<strong>https://mumalink.com/h/hospital1</strong>). Note: for <code>*.mumalink.com</code> browser links to resolve externally, ensure a wildcard DNS CNAME/A record for <code>*</code> points to your Render service alongside custom domain <code>*.mumalink.com</code> in Render Settings.
+    <div class="hero-setup-bar">
+      <div>
+        <h1 style="font-size: 20px; font-weight: 800; color: var(--ink-900); letter-spacing: -0.02em;">Clinic &amp; Hospital Accounts</h1>
+        <p style="font-size: 13px; color: var(--ink-500); margin-top: 3px;">Create a clinic workspace, add its administrator login, and generate its live MumaLINK portal link.</p>
+      </div>
+      <button type="button" id="openClinicSetupModalBtn" class="btn btn-primary">+ Set Up New Clinic</button>
     </div>
 
-    <!-- Section 1: Add Hospital & Initial Login -->
+    <div class="notice-bar">
+      Each clinic gets a dedicated login portal on its subdomain (for example <strong>hospital1.mumalink.com</strong>) and direct path (<strong>https://mumalink.com/h/hospital1</strong>). Note: for <code>*.mumalink.com</code> browser links to resolve externally, ensure a wildcard DNS CNAME/A record for <code>*</code> points to your Render service alongside custom domain <code>*.mumalink.com</code> in Render Settings.
+    </div>
+
+    <!-- Section 1: Registered Partner Hospitals -->
     <section class="card">
       <div class="card-header">
         <div>
-          <h2 class="card-title">1. Onboard New Partner Hospital & Portal Subdomain</h2>
-          <p class="card-subtitle">Creates the hospital record in PostgreSQL, assigns its subdomain portal URL, and sets up its first login account.</p>
-        </div>
-      </div>
-
-      <div id="createHospitalAlert" class="alert-box"></div>
-
-      <form id="createHospitalForm">
-        <div class="grid-2">
-          <div class="form-group">
-            <label class="form-label" for="hospName">Hospital Name</label>
-            <input type="text" id="hospName" class="form-input" placeholder="e.g. Lagos Island Maternity Hospital" required>
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="hospSubdomain">Portal Subdomain</label>
-            <input type="text" id="hospSubdomain" class="form-input" placeholder="e.g. hospital1" required>
-            <span class="form-hint" id="hospSubdomainPreview">https://hospital1.mumalink.com</span>
-          </div>
-        </div>
-
-        <div class="grid-3">
-          <div class="form-group">
-            <label class="form-label" for="hospState">State / Region</label>
-            <input type="text" id="hospState" class="form-input" placeholder="e.g. Ondo State" required>
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="hospPhone">Maternity Emergency Phone</label>
-            <input type="tel" id="hospPhone" class="form-input" placeholder="e.g. +234 803 000 0000" required>
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="hospEmail">Official Hospital Email</label>
-            <input type="email" id="hospEmail" class="form-input" placeholder="maternity@hospital.org">
-          </div>
-        </div>
-
-        <div class="section-divider">Initial Hospital Clinician Login (Optional — Recommended)</div>
-
-        <div class="grid-3">
-          <div class="form-group">
-            <label class="form-label" for="hospAdminName">Clinician Full Name</label>
-            <input type="text" id="hospAdminName" class="form-input" placeholder="e.g. Dr. Tunde Bakare">
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="hospAdminEmail">Login Email</label>
-            <input type="email" id="hospAdminEmail" class="form-input" placeholder="doctor@hospital1.org">
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="hospAdminPassword">Login Password</label>
-            <input type="password" id="hospAdminPassword" class="form-input" placeholder="Minimum 6 characters">
-          </div>
-        </div>
-
-        <button type="submit" id="createHospitalBtn" class="btn btn-primary">Create Hospital & Portal Subdomain</button>
-      </form>
-    </section>
-
-    <!-- Section 2: Registered Partner Hospitals -->
-    <section class="card">
-      <div class="card-header">
-        <div>
-          <h2 class="card-title">2. Partner Hospitals & Portal Subdomains</h2>
-          <p class="card-subtitle">Live records from PostgreSQL with direct subdomain and fallback login links.</p>
+          <h2 class="card-title">Partner Clinics &amp; Hospitals</h2>
+          <p class="card-subtitle">Live records from PostgreSQL with direct subdomain and clinic login links.</p>
         </div>
         <button type="button" id="refreshAdminBtn" class="btn btn-sm">Refresh Data</button>
       </div>
@@ -488,12 +600,12 @@
       </div>
     </section>
 
-    <!-- Section 3: Create / Reset Clinician Logins -->
+    <!-- Section 2: Create / Reset Clinician Logins -->
     <section class="card" id="clinicianSection">
       <div class="card-header">
         <div>
-          <h2 class="card-title">3. Hospital Clinician Logins</h2>
-          <p class="card-subtitle">Add new hospital users or reset an existing clinician's password and assigned hospital.</p>
+          <h2 class="card-title">Clinic &amp; Hospital Admin Logins</h2>
+          <p class="card-subtitle">Add additional hospital users or reset an existing clinician's password and assigned clinic.</p>
         </div>
       </div>
 
@@ -554,6 +666,121 @@
     </section>
 
   </main>
+
+  <!-- Clinic Setup Modal -->
+  <div id="clinicSetupModalOverlay" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="clinicSetupModalTitle">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div>
+          <h2 class="modal-title" id="clinicSetupModalTitle">Set Up Clinic on MumaLINK</h2>
+          <p class="modal-subtitle">Create a clinic account, generate its portal link, and configure the clinic administrator login.</p>
+        </div>
+        <button type="button" id="closeClinicSetupModalBtn" class="modal-close" aria-label="Close modal">&times;</button>
+      </div>
+
+      <div class="modal-body">
+        <div id="createHospitalAlert" class="alert-box"></div>
+
+        <!-- State 1: Clinic & Admin Details Form -->
+        <form id="createHospitalForm">
+          <div class="grid-2">
+            <div class="form-group">
+              <label class="form-label" for="hospName">Clinic / Hospital Name</label>
+              <input type="text" id="hospName" class="form-input" placeholder="e.g. St. Nicholas Maternity Clinic" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="hospSubdomain">Portal Subdomain Slug</label>
+              <input type="text" id="hospSubdomain" class="form-input" placeholder="e.g. stnicholas" required>
+              <span class="form-hint" id="hospSubdomainPreview">https://&lt;subdomain&gt;.mumalink.com</span>
+            </div>
+          </div>
+
+          <div class="grid-3">
+            <div class="form-group">
+              <label class="form-label" for="hospState">State / Region</label>
+              <input type="text" id="hospState" class="form-input" value="Ondo State" placeholder="e.g. Ondo State" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="hospPhone">Maternity Emergency Phone</label>
+              <input type="tel" id="hospPhone" class="form-input" placeholder="e.g. +234 803 000 0000" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="hospEmail">Official Clinic Email</label>
+              <input type="email" id="hospEmail" class="form-input" placeholder="maternity@clinic.org">
+            </div>
+          </div>
+
+          <div class="section-divider">Clinic Administrator Account Details</div>
+
+          <div class="form-group">
+            <label class="form-label" for="hospAdminName">Admin Full Name</label>
+            <input type="text" id="hospAdminName" class="form-input" placeholder="e.g. Dr. Tunde Bakare" required>
+          </div>
+
+          <div class="grid-2">
+            <div class="form-group">
+              <label class="form-label" for="hospAdminEmail">Admin Login Email</label>
+              <input type="email" id="hospAdminEmail" class="form-input" placeholder="admin@clinic.org" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="hospAdminPassword">Admin Password</label>
+              <input type="password" id="hospAdminPassword" class="form-input" minlength="6" placeholder="Minimum 6 characters" required>
+            </div>
+          </div>
+
+          <div class="modal-footer">
+            <button type="button" id="cancelClinicSetupModalBtn" class="btn">Cancel</button>
+            <button type="submit" id="createHospitalBtn" class="btn btn-primary">Create Clinic &amp; Generate Link</button>
+          </div>
+        </form>
+
+        <!-- State 2: Clinic Live Confirmation View -->
+        <div id="adminClinicLiveView" style="display: none;">
+          <div class="live-banner">
+            <div class="live-pill">
+              <span class="live-dot"></span>
+              <span>Clinic Live on MumaLINK</span>
+            </div>
+            <h3 style="font-size: 18px; font-weight: 800; color: var(--ink-900); margin-bottom: 4px;">Clinic Live on MumaLINK</h3>
+            <p style="font-size: 13.5px; color: var(--ink-700);">
+              <strong id="adminLiveClinicName">Clinic</strong> is now active with administrator access configured.
+            </p>
+          </div>
+
+          <div class="link-card">
+            <div class="link-row">
+              <div style="min-width: 0; flex: 1;">
+                <div class="link-label">Clinic Portal Subdomain</div>
+                <div class="link-value" id="adminLiveSubdomainUrl">https://clinic.mumalink.com</div>
+              </div>
+              <button type="button" id="adminCopySubdomainBtn" class="btn btn-sm">Copy Link</button>
+            </div>
+
+            <div class="link-row">
+              <div style="min-width: 0; flex: 1;">
+                <div class="link-label">Direct Login Link</div>
+                <div class="link-value" id="adminLiveDirectUrl">https://mumalink.com/h/clinic</div>
+              </div>
+              <button type="button" id="adminCopyDirectBtn" class="btn btn-sm">Copy Link</button>
+            </div>
+
+            <div class="link-row">
+              <div style="min-width: 0; flex: 1;">
+                <div class="link-label">Clinic Admin Login Email</div>
+                <div style="font-size: 13px; font-weight: 600; color: var(--ink-900);" id="adminLiveEmail">admin@clinic.org</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="modal-footer">
+            <a id="adminOpenLoginLink" href="/h/clinic" target="_blank" rel="noopener" class="btn">Open Clinic Login Portal</a>
+            <button type="button" id="adminSetupAnotherBtn" class="btn">Set Up Another Clinic</button>
+            <button type="button" id="adminDoneSetupBtn" class="btn btn-primary">Done</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <script>
     const TOKEN_KEY = 'mumalink_token';
@@ -698,7 +925,10 @@
             <td><span class="pill-stat">${parseInt(h.mothers_count, 10) || 0}</span></td>
             <td><span class="pill-stat">${parseInt(h.clinicians_count, 10) || 0}</span></td>
             <td>
-              <button type="button" class="btn btn-sm" onclick="prefillHospitalLogin('${escapeHtml(h.id)}')">Add Login</button>
+              <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+                ${h.subdomain ? `<a class="btn btn-sm" href="${escapeHtml(fallbackPath)}" target="_blank" rel="noopener">Open Login</a>` : ''}
+                <button type="button" class="btn btn-sm" onclick="prefillHospitalLogin('${escapeHtml(h.id)}')">Add Login</button>
+              </div>
             </td>
           </tr>
         `;
@@ -749,15 +979,96 @@
       document.getElementById('clinicianSection').scrollIntoView({ behavior: 'smooth' });
     };
 
+    function sanitizeAdminSlug(val) {
+      return String(val || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9-]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 48);
+    }
+
+    async function copyAdminText(text, btnEl, defaultText) {
+      if (!text) return;
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch (err) {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        ta.remove();
+      }
+      if (btnEl) {
+        btnEl.textContent = 'Copied';
+        setTimeout(() => { btnEl.textContent = defaultText; }, 2000);
+      }
+    }
+
+    let adminSubdomainTouched = false;
+
+    function openClinicSetupModal() {
+      adminSubdomainTouched = false;
+      clearBoxAlert('createHospitalAlert');
+      const form = document.getElementById('createHospitalForm');
+      const liveView = document.getElementById('adminClinicLiveView');
+      const subPreview = document.getElementById('hospSubdomainPreview');
+      if (form) {
+        form.reset();
+        form.style.display = 'block';
+      }
+      if (liveView) liveView.style.display = 'none';
+      if (subPreview) subPreview.textContent = 'https://<subdomain>.mumalink.com';
+      document.getElementById('clinicSetupModalOverlay')?.classList.add('active');
+    }
+
+    function closeClinicSetupModal() {
+      document.getElementById('clinicSetupModalOverlay')?.classList.remove('active');
+    }
+
     document.addEventListener('DOMContentLoaded', () => {
+      const nameInput = document.getElementById('hospName');
       const subInput = document.getElementById('hospSubdomain');
       const subPreview = document.getElementById('hospSubdomainPreview');
-      if (subInput && subPreview) {
+
+      if (nameInput && subInput && subPreview) {
+        nameInput.addEventListener('input', () => {
+          if (!adminSubdomainTouched) {
+            const slug = sanitizeAdminSlug(nameInput.value);
+            subInput.value = slug;
+            subPreview.textContent = slug ? `https://${slug}.mumalink.com` : 'https://<subdomain>.mumalink.com';
+          }
+        });
         subInput.addEventListener('input', () => {
-          const clean = subInput.value.toLowerCase().replace(/[^a-z0-9-]/g, '').replace(/^-+|-+$/g, '');
+          adminSubdomainTouched = true;
+          const clean = subInput.value.toLowerCase().replace(/[^a-z0-9-]/g, '').replace(/^-+/g, '');
+          subInput.value = clean;
           subPreview.textContent = clean ? `https://${clean}.mumalink.com` : 'https://<subdomain>.mumalink.com';
         });
       }
+
+      document.getElementById('openClinicSetupModalBtn')?.addEventListener('click', openClinicSetupModal);
+      document.getElementById('topbarSetupClinicBtn')?.addEventListener('click', openClinicSetupModal);
+      document.getElementById('closeClinicSetupModalBtn')?.addEventListener('click', closeClinicSetupModal);
+      document.getElementById('cancelClinicSetupModalBtn')?.addEventListener('click', closeClinicSetupModal);
+      document.getElementById('adminDoneSetupBtn')?.addEventListener('click', closeClinicSetupModal);
+      document.getElementById('adminSetupAnotherBtn')?.addEventListener('click', openClinicSetupModal);
+
+      document.getElementById('clinicSetupModalOverlay')?.addEventListener('click', (e) => {
+        if (e.target.id === 'clinicSetupModalOverlay') closeClinicSetupModal();
+      });
+
+      document.getElementById('adminCopySubdomainBtn')?.addEventListener('click', (e) => {
+        const text = document.getElementById('adminLiveSubdomainUrl')?.textContent || '';
+        copyAdminText(text, e.currentTarget, 'Copy Link');
+      });
+
+      document.getElementById('adminCopyDirectBtn')?.addEventListener('click', (e) => {
+        const text = document.getElementById('adminLiveDirectUrl')?.textContent || '';
+        copyAdminText(text, e.currentTarget, 'Copy Link');
+      });
 
       document.getElementById('adminSignOutBtn')?.addEventListener('click', () => {
         localStorage.removeItem(TOKEN_KEY);
@@ -807,7 +1118,7 @@
 
         const payload = {
           name: document.getElementById('hospName').value.trim(),
-          subdomain: document.getElementById('hospSubdomain').value.trim(),
+          subdomain: sanitizeAdminSlug(document.getElementById('hospSubdomain').value.trim()),
           state: document.getElementById('hospState').value.trim(),
           phone: document.getElementById('hospPhone').value.trim(),
           contact_email: document.getElementById('hospEmail').value.trim(),
@@ -823,17 +1134,25 @@
           });
           const data = await res.json();
           if (!res.ok || !data.success) {
-            showBoxAlert('createHospitalAlert', data.error || 'Failed to create hospital.', 'error');
+            showBoxAlert('createHospitalAlert', data.error || 'Failed to create clinic.', 'error');
             return;
           }
-          document.getElementById('createHospitalForm').reset();
-          subPreview.textContent = 'https://<subdomain>.mumalink.com';
-          const portalUrl = `https://${data.hospital.subdomain}.mumalink.com`;
-          const loginNote = data.clinician ? ` Login created for ${data.clinician.email}.` : '';
-          showBoxAlert('createHospitalAlert', `Created ${data.hospital.name} at ${portalUrl}.${loginNote}`, 'success');
+
+          const createdSlug = data.hospital?.subdomain || payload.subdomain;
+          const portalUrl = `https://${createdSlug}.mumalink.com`;
+          const directUrl = `${window.location.origin}/h/${createdSlug}`;
+
+          document.getElementById('adminLiveClinicName').textContent = data.hospital?.name || payload.name;
+          document.getElementById('adminLiveSubdomainUrl').textContent = portalUrl;
+          document.getElementById('adminLiveDirectUrl').textContent = directUrl;
+          document.getElementById('adminLiveEmail').textContent = data.clinician?.email || payload.admin_email;
+          document.getElementById('adminOpenLoginLink').href = `/h/${createdSlug}`;
+
+          document.getElementById('createHospitalForm').style.display = 'none';
+          document.getElementById('adminClinicLiveView').style.display = 'block';
           loadAdminData();
         } catch (err) {
-          showBoxAlert('createHospitalAlert', 'Network error creating hospital.', 'error');
+          showBoxAlert('createHospitalAlert', 'Network error creating clinic.', 'error');
         } finally {
           btn.disabled = false;
         }

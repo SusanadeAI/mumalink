@@ -95,6 +95,14 @@ const addHospitalModalOverlay = document.getElementById('addHospitalModalOverlay
 const closeAddHospitalModalBtn = document.getElementById('closeAddHospitalModalBtn');
 const cancelAddHospitalBtn = document.getElementById('cancelAddHospitalBtn');
 const addHospitalForm = document.getElementById('addHospitalForm');
+const clinicLiveSuccessView = document.getElementById('clinicLiveSuccessView');
+const newHospitalNameInput = document.getElementById('newHospitalName');
+const newHospitalSubdomainInput = document.getElementById('newHospitalSubdomain');
+const newHospitalSubdomainPreview = document.getElementById('newHospitalSubdomainPreview');
+const copyClinicSubdomainBtn = document.getElementById('copyClinicSubdomainBtn');
+const copyClinicDirectBtn = document.getElementById('copyClinicDirectBtn');
+const doneClinicSetupBtn = document.getElementById('doneClinicSetupBtn');
+let hospitalSubdomainTouched = false;
 
 // Toast Container
 const toastContainer = document.getElementById('toastContainer');
@@ -419,11 +427,46 @@ function setupEventListeners() {
   if (cancelSimulatorBtn) cancelSimulatorBtn.addEventListener('click', () => closeModal(simulatorModalOverlay));
   if (simulatorForm) simulatorForm.addEventListener('submit', handleSimulatorSubmit);
 
-  // Add Partner Hospital Modal Controls (Super Admin)
-  if (openAddHospitalBtn) openAddHospitalBtn.addEventListener('click', () => openModal(addHospitalModalOverlay));
-  if (closeAddHospitalModalBtn) closeAddHospitalModalBtn.addEventListener('click', () => closeModal(addHospitalModalOverlay));
-  if (cancelAddHospitalBtn) cancelAddHospitalBtn.addEventListener('click', () => closeModal(addHospitalModalOverlay));
+  // Add Partner Hospital / Clinic Setup Modal Controls (Super Admin)
+  if (openAddHospitalBtn) openAddHospitalBtn.addEventListener('click', openAddHospitalModal);
+  if (closeAddHospitalModalBtn) closeAddHospitalModalBtn.addEventListener('click', closeAddHospitalModal);
+  if (cancelAddHospitalBtn) cancelAddHospitalBtn.addEventListener('click', closeAddHospitalModal);
+  if (doneClinicSetupBtn) doneClinicSetupBtn.addEventListener('click', closeAddHospitalModal);
   if (addHospitalForm) addHospitalForm.addEventListener('submit', handleAddHospitalSubmit);
+
+  if (newHospitalNameInput && newHospitalSubdomainInput) {
+    newHospitalNameInput.addEventListener('input', () => {
+      if (!hospitalSubdomainTouched) {
+        const slug = sanitizeClinicSlug(newHospitalNameInput.value);
+        newHospitalSubdomainInput.value = slug;
+        if (newHospitalSubdomainPreview) {
+          newHospitalSubdomainPreview.textContent = slug ? `${slug}.mumalink.com` : 'clinic.mumalink.com';
+        }
+      }
+    });
+    newHospitalSubdomainInput.addEventListener('input', () => {
+      hospitalSubdomainTouched = true;
+      const clean = newHospitalSubdomainInput.value.toLowerCase().replace(/[^a-z0-9-]/g, '').replace(/^-+/g, '');
+      newHospitalSubdomainInput.value = clean;
+      if (newHospitalSubdomainPreview) {
+        newHospitalSubdomainPreview.textContent = clean ? `${clean}.mumalink.com` : 'clinic.mumalink.com';
+      }
+    });
+  }
+
+  if (copyClinicSubdomainBtn) {
+    copyClinicSubdomainBtn.addEventListener('click', () => {
+      const url = document.getElementById('liveClinicSubdomainUrl')?.textContent || '';
+      copyTextWithFeedback(url, copyClinicSubdomainBtn, 'Copy Link');
+    });
+  }
+
+  if (copyClinicDirectBtn) {
+    copyClinicDirectBtn.addEventListener('click', () => {
+      const url = document.getElementById('liveClinicDirectUrl')?.textContent || '';
+      copyTextWithFeedback(url, copyClinicDirectBtn, 'Copy');
+    });
+  }
 
   // Note submission form
   if (addNoteForm) addNoteForm.addEventListener('submit', handleAddNoteSubmit);
@@ -1281,37 +1324,122 @@ async function handleSaveHospitalSettings(e) {
   }
 }
 
+function sanitizeClinicSlug(val) {
+  return String(val || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48);
+}
+
+async function copyTextWithFeedback(text, btnEl, defaultLabel) {
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (err) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    ta.remove();
+  }
+  showToast('Link copied to clipboard.');
+  if (btnEl) {
+    btnEl.textContent = 'Copied';
+    setTimeout(() => { btnEl.textContent = defaultLabel; }, 2000);
+  }
+}
+
+function openAddHospitalModal() {
+  hospitalSubdomainTouched = false;
+  if (addHospitalForm) {
+    addHospitalForm.reset();
+    addHospitalForm.style.display = '';
+  }
+  if (clinicLiveSuccessView) {
+    clinicLiveSuccessView.style.display = 'none';
+  }
+  if (newHospitalSubdomainPreview) {
+    newHospitalSubdomainPreview.textContent = 'clinic.mumalink.com';
+  }
+  openModal(addHospitalModalOverlay);
+  renderIcons();
+}
+
+function closeAddHospitalModal() {
+  closeModal(addHospitalModalOverlay);
+}
+
 async function handleAddHospitalSubmit(e) {
   e.preventDefault();
 
-  const name = document.getElementById('newHospitalName').value;
-  const subdomain = document.getElementById('newHospitalSubdomain')?.value?.trim();
-  const state = document.getElementById('newHospitalState').value;
-  const phone = document.getElementById('newHospitalPhone').value;
-  const contact_email = document.getElementById('newHospitalEmail').value;
+  const name = document.getElementById('newHospitalName').value.trim();
+  const subdomain = sanitizeClinicSlug(document.getElementById('newHospitalSubdomain')?.value?.trim());
+  const state = document.getElementById('newHospitalState').value.trim();
+  const phone = document.getElementById('newHospitalPhone').value.trim();
+  const contact_email = document.getElementById('newHospitalEmail').value.trim();
+  const admin_name = document.getElementById('newHospitalAdminName')?.value?.trim() || '';
+  const admin_email = document.getElementById('newHospitalAdminEmail')?.value?.trim() || '';
+  const admin_password = document.getElementById('newHospitalAdminPassword')?.value || '';
+
+  const submitBtn = document.getElementById('submitAddHospitalBtn');
+  if (submitBtn) submitBtn.disabled = true;
 
   try {
     const res = await authFetch('/api/hospitals', {
       method: 'POST',
-      body: JSON.stringify({ name, subdomain, state, phone, contact_email })
+      body: JSON.stringify({
+        name,
+        subdomain,
+        state,
+        phone,
+        contact_email,
+        admin_name,
+        admin_email,
+        admin_password
+      })
     });
 
     const data = await res.json();
     if (data.success) {
-      closeModal(addHospitalModalOverlay);
-      addHospitalForm.reset();
-      showToast(`Partner facility "${name}" onboarded.`);
+      const createdSlug = data.hospital?.subdomain || subdomain;
+      const subdomainUrl = `https://${createdSlug}.mumalink.com`;
+      const directUrl = `${window.location.origin}/h/${createdSlug}`;
+      const createdAdminEmail = data.clinician?.email || admin_email;
+
+      const nameEl = document.getElementById('liveClinicNameDisplay');
+      const subUrlEl = document.getElementById('liveClinicSubdomainUrl');
+      const directUrlEl = document.getElementById('liveClinicDirectUrl');
+      const adminEmailEl = document.getElementById('liveClinicAdminEmail');
+      const portalLinkEl = document.getElementById('openClinicPortalLink');
+
+      if (nameEl) nameEl.textContent = data.hospital?.name || name;
+      if (subUrlEl) subUrlEl.textContent = subdomainUrl;
+      if (directUrlEl) directUrlEl.textContent = directUrl;
+      if (adminEmailEl) adminEmailEl.textContent = createdAdminEmail;
+      if (portalLinkEl) portalLinkEl.href = `/h/${createdSlug}`;
+
+      if (addHospitalForm) addHospitalForm.style.display = 'none';
+      if (clinicLiveSuccessView) clinicLiveSuccessView.style.display = '';
+      renderIcons();
+
+      showToast(`Clinic "${data.hospital?.name || name}" is live on MumaLINK.`);
       await loadHospitalsList();
       activeHospitalId = data.hospital.id;
       if (hospitalContextSelector) hospitalContextSelector.value = activeHospitalId;
       loadDashboardStats();
       loadMothers();
     } else {
-      showToast(data.error || "Failed to add partner hospital.");
+      showToast(data.error || 'Failed to set up clinic.');
     }
   } catch (err) {
-    console.error("Error adding hospital:", err);
-    showToast("Network error registering facility.");
+    console.error('Error setting up clinic:', err);
+    showToast('Network error setting up clinic.');
+  } finally {
+    if (submitBtn) submitBtn.disabled = false;
   }
 }
 

@@ -487,56 +487,120 @@
     </div>
   </div>
 
-  <!-- Register Partner Hospital Modal (Super Admin) -->
+  <!-- Set Up Clinic / Partner Hospital Modal (Super Admin) -->
   <div id="addHospitalModalOverlay" class="modal-overlay">
-    <div class="modal-card">
-      <div class="modal-header">
+    <div class="modal-card" style="max-width: 560px; max-height: 90vh; overflow-y: auto;">
+      <div id="clinicSetupModalHeader" class="modal-header">
         <div>
-          <h2 class="modal-title">Register Partner Hospital</h2>
-          <p class="modal-subtitle">Add a hospital facility to the MumaLINK maternal health network.</p>
+          <h2 class="modal-title">Set Up Clinic on MumaLINK</h2>
+          <p class="modal-subtitle">Create a clinic workspace, subdomain link, and administrator login.</p>
         </div>
-        <button id="closeAddHospitalModalBtn" class="btn-icon">
+        <button id="closeAddHospitalModalBtn" class="btn-icon" type="button">
           <i data-lucide="x"></i>
         </button>
       </div>
 
       <form id="addHospitalForm" class="modal-body">
         <div class="form-group">
-          <label class="form-label">Hospital / Healthcare Facility Name</label>
-          <input type="text" id="newHospitalName" class="form-input" placeholder="e.g. State Specialist Hospital Ikare" required>
+          <label class="form-label" for="newHospitalName">Hospital / Clinic Name</label>
+          <input type="text" id="newHospitalName" class="form-input" placeholder="e.g. St. Nicholas Maternity Clinic" required>
         </div>
 
         <div class="form-row-2">
           <div class="form-group">
-            <label class="form-label">Portal Subdomain Slug</label>
-            <input type="text" id="newHospitalSubdomain" class="form-input" placeholder="e.g. hospital1" required>
-            <span class="form-hint">Portal URL: &lt;slug&gt;.mumalink.com</span>
+            <label class="form-label" for="newHospitalSubdomain">Portal Subdomain Slug</label>
+            <input type="text" id="newHospitalSubdomain" class="form-input" placeholder="e.g. stnicholas" required>
+            <span class="form-hint">Portal URL: <strong id="newHospitalSubdomainPreview">clinic.mumalink.com</strong></span>
           </div>
           <div class="form-group">
-            <label class="form-label">State / Region</label>
+            <label class="form-label" for="newHospitalState">State / Region</label>
             <input type="text" id="newHospitalState" class="form-input" value="Ondo State" required>
           </div>
         </div>
 
         <div class="form-row-2">
           <div class="form-group">
-            <label class="form-label">Maternity Emergency Line</label>
+            <label class="form-label" for="newHospitalPhone">Maternity Emergency Line</label>
             <input type="tel" id="newHospitalPhone" class="form-input" placeholder="e.g. +234 803 000 0000" required>
           </div>
           <div class="form-group">
-            <label class="form-label">Official Contact Email</label>
-            <input type="email" id="newHospitalEmail" class="form-input" placeholder="maternity@hospital.org">
+            <label class="form-label" for="newHospitalEmail">Clinic Contact Email</label>
+            <input type="email" id="newHospitalEmail" class="form-input" placeholder="maternity@clinic.org">
+          </div>
+        </div>
+
+        <div style="border-top: 1px solid #E2E8F0; padding-top: 14px; margin-top: 4px;">
+          <div style="font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #475569; margin-bottom: 10px;">
+            Clinic Administrator Account
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="newHospitalAdminName">Admin Full Name</label>
+            <input type="text" id="newHospitalAdminName" class="form-input" placeholder="e.g. Dr. Adewale Ogunleye" required>
+          </div>
+          <div class="form-row-2">
+            <div class="form-group">
+              <label class="form-label" for="newHospitalAdminEmail">Admin Login Email</label>
+              <input type="email" id="newHospitalAdminEmail" class="form-input" placeholder="admin@clinic.org" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="newHospitalAdminPassword">Initial Password</label>
+              <input type="password" id="newHospitalAdminPassword" class="form-input" minlength="6" placeholder="Minimum 6 characters" required>
+            </div>
           </div>
         </div>
 
         <div class="modal-footer">
           <button type="button" id="cancelAddHospitalBtn" class="btn btn-secondary-pill">Cancel</button>
-          <button type="submit" class="btn btn-primary-pill">
+          <button type="submit" id="submitAddHospitalBtn" class="btn btn-primary-pill">
             <i data-lucide="plus"></i>
-            <span>Add Partner Hospital</span>
+            <span>Create Clinic &amp; Generate Link</span>
           </button>
         </div>
       </form>
+
+      <div id="clinicLiveSuccessView" class="modal-body" style="display: none;">
+        <div style="padding: 18px; border-radius: 10px; border: 1px solid #BBF7D0; background: #F0FDF4; margin-bottom: 16px;">
+          <div style="display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; background: #DCFCE7; color: #166534; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 8px;">
+            <span style="width: 7px; height: 7px; border-radius: 50%; background: #16A34A; display: inline-block;"></span>
+            <span>Clinic Live on MumaLINK</span>
+          </div>
+          <h3 style="margin: 0 0 4px; font-size: 1.15rem; font-weight: 700; color: #0F172A;">Clinic Live on MumaLINK</h3>
+          <p style="margin: 0; font-size: 0.88rem; color: #334155; line-height: 1.45;">
+            <strong id="liveClinicNameDisplay">Clinic</strong> is now active and ready for administrator login and maternal onboarding.
+          </p>
+        </div>
+
+        <div style="border: 1px solid #E2E8F0; border-radius: 10px; background: #F8FAFC; padding: 14px; display: flex; flex-direction: column; gap: 12px;">
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;">
+            <div style="min-width: 0; flex: 1;">
+              <div style="font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: #64748B; margin-bottom: 2px;">Clinic Portal Subdomain</div>
+              <code id="liveClinicSubdomainUrl" style="font-size: 0.85rem; color: #0F172A; font-weight: 600; word-break: break-all;">https://clinic.mumalink.com</code>
+            </div>
+            <button type="button" id="copyClinicSubdomainBtn" class="btn btn-secondary-pill" style="padding: 6px 12px; font-size: 0.78rem;">Copy Link</button>
+          </div>
+
+          <div style="border-top: 1px solid #E2E8F0; padding-top: 10px; display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;">
+            <div style="min-width: 0; flex: 1;">
+              <div style="font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: #64748B; margin-bottom: 2px;">Direct Login Link</div>
+              <code id="liveClinicDirectUrl" style="font-size: 0.85rem; color: #0F172A; font-weight: 600; word-break: break-all;">https://mumalink.com/h/clinic</code>
+            </div>
+            <button type="button" id="copyClinicDirectBtn" class="btn btn-secondary-pill" style="padding: 6px 12px; font-size: 0.78rem;">Copy</button>
+          </div>
+
+          <div style="border-top: 1px solid #E2E8F0; padding-top: 10px;">
+            <div style="font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: #64748B; margin-bottom: 2px;">Clinic Admin Login Email</div>
+            <span id="liveClinicAdminEmail" style="font-size: 0.88rem; color: #0F172A; font-weight: 600;">admin@clinic.org</span>
+          </div>
+        </div>
+
+        <div class="modal-footer" style="margin-top: 18px;">
+          <a id="openClinicPortalLink" href="/h/clinic" target="_blank" rel="noopener noreferrer" class="btn btn-secondary-pill" style="text-decoration: none;">
+            <i data-lucide="external-link"></i>
+            <span>Open Clinic Login Portal</span>
+          </a>
+          <button type="button" id="doneClinicSetupBtn" class="btn btn-primary-pill">Done</button>
+        </div>
+      </div>
     </div>
   </div>
 
