@@ -1297,6 +1297,13 @@ app.post(WEBHOOK_PATHS, async (req, res) => {
     if (Array.isArray(rawBody.results) && rawBody.results.length > 0) {
       console.log(`[Infobip Webhook] Received ${rawBody.results.length} message(s)`);
       for (const item of rawBody.results) {
+        const toPhone = String(item.to || '').replace(/[^0-9]/g, '');
+        const expectedSender = String(process.env.INFOBIP_SENDER || '2348138048129').replace(/[^0-9]/g, '');
+        if (toPhone && toPhone !== expectedSender) {
+          console.log(`[Infobip Webhook] Ignoring message sent to non-MumaLINK number: ${toPhone}`);
+          continue;
+        }
+
         const fromPhone = item.from || item.contact?.phoneNumber || '';
         const text = item.message?.text || (typeof item.message === 'string' ? item.message : '') || item.cleanText || '';
         const name = item.contact?.name || 'Postpartum Mother';
