@@ -116,6 +116,126 @@ initPostgresDatabase()
   .catch(err => console.error('Failed to init PostgreSQL:', err));
 
 // =============================================================================
+// TRANSACTIONAL EMAIL DISPATCH HELPERS (SENDPULSE API + SMTP FALLBACK)
+// =============================================================================
+function escapeHtmlServer(str) {
+  return String(str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function buildBrandedEmailHtml({ badge = 'MumaLINK Clinical Network', title, subtitle, rows = [], ctaLabel, ctaUrl, footerNote }) {
+  const rowsHtml = rows
+    .filter(r => r && r.value !== undefined && r.value !== null && String(r.value).trim() !== '')
+    .map(r => `
+      <tr>
+        <td style="padding: 10px 14px; border-bottom: 1px solid #E2E8F0; color: #64748B; font-size: 13px; font-weight: 600; width: 38%; vertical-align: top;">${escapeHtmlServer(r.label)}</td>
+        <td style="padding: 10px 14px; border-bottom: 1px solid #E2E8F0; color: #0F172A; font-size: 13px; font-weight: 600; vertical-align: top;">${escapeHtmlServer(r.value)}</td>
+      </tr>
+    `).join('');
+
+  const ctaHtml = (ctaLabel && ctaUrl) ? `
+    <div style="margin-top: 22px;">
+      <a href="${escapeHtmlServer(ctaUrl)}" style="display: inline-block; background-color: #0F172A; color: #FFFFFF; text-decoration: none; font-size: 13.5px; font-weight: 700; padding: 11px 20px; border-radius: 8px;">${escapeHtmlServer(ctaLabel)}</a>
+    </div>
+  ` : '';
+
+  return `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif; background-color: #F8FAFC; padding: 28px 16px; color: #0F172A;">
+      <div style="max-width: 600px; margin: 0 auto; background-color: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 12px; overflow: hidden;">
+        <div style="padding: 20px 24px; border-bottom: 1px solid #E2E8F0; background-color: #0F172A; color: #FFFFFF;">
+          <div style="font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #94A3B8; margin-bottom: 6px;">${escapeHtmlServer(badge)}</div>
+          <div style="font-size: 19px; font-weight: 800; line-height: 1.3;">${escapeHtmlServer(title)}</div>
+        </div>
+        <div style="padding: 22px 24px;">
+          ${subtitle ? `<p style="margin: 0 0 18px 0; font-size: 14px; color: #334155; line-height: 1.55;">${escapeHtmlServer(subtitle)}</p>` : ''}
+          ${rowsHtml ? `<table style="width: 100%; border-collapse: collapse; border: 1px solid #E2E8F0; border-radius: 8px; overflow: hidden;">${rowsHtml}</table>` : ''}
+          ${ctaHtml}
+          <p style="margin: 22px 0 0 0; font-size: 12px; color: #64748B; line-height: 1.5;">
+            ${escapeHtmlServer(footerNote || 'Sent automatically by MumaLINK Maternal Postpartum Triage & Clinical Surveillance.')}
+          </p>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function getHospitalRecipients(hospitalId, { includeSuperAdmins = false, extraEmails = [] } = {}) {
+  const recipients = [];
+  const seen = new Set();
+  const addEmail = (email, name) => {
+    const clean = String(email || '').trim();
+    if (!clean || !clean.includes('@')) return;
+    const key = clean.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    recipients.push({ email: clean, name: name || clean.split('@')[0] });
+  };
+
+  for (const extra of extraEmails) {
+    if (typeof extra === 'string') addEmail(extra);
+    else if (extra && extra.email) addEmail(extra.email, extra.name);
+  }
+
+  try {
+    if (hospitalId) {
+      const { rows: hRows } = await pool.query('SELECT name, contact_email FROM hospitals WHERE id = $1', [hospitalId]);
+      if (hRows[0]?.contact_email) addEmail(hRows[0].contact_email, hRows[0].name);
+
+      const { rows: cRows } = await pool.query('SELECT full_name, email FROM clinicians WHERE hospital_id = $1', [hospitalId]);
+      for (const c of cRows) addEmail(c.email, c.full_name);
+    }
+
+    if (includeSuperAdmins) {
+      const { rows: adminRows } = await pool.query("SELECT full_name, email FROM clinicians WHERE role = 'Super Admin'");
+      for (const a of adminRows) addEmail(a.email, a.full_name);
+    }
+  } catch (err) {
+    console.error('[Email Recipient Lookup Error]:', err.message);
+  }
+  return recipients;
+}
+
+async function sendNotificationEmailSafe({ to, subject, html, text }) {
+  try {
+    return await sendpulse.sendEmail({ to, subject, html, text });
+  } catch (err) {
+    console.error('[Email Dispatch Notice]:', err.message);
+    return { success: false, error: err.message };
+  }
+}
+
+async function sendCriticalRiskAlertEmail(mother, { reason, score = null, hospitalName = '' }) {
+  const hospRes = await pool.query('SELECT name, subdomain, phone FROM hospitals WHERE id = $1', [mother.hospital_id]).catch(() => ({ rows: [] }));
+  const hosp = hospRes.rows[0] || {};
+  const label = hospitalName || mother.hospital_name || hosp.name || 'Partner Hospital';
+  const recipients = await getHospitalRecipients(mother.hospital_id, { includeSuperAdmins: true });
+  const portalUrl = hosp.subdomain ? `https://${hosp.subdomain}.mumalink.com/dashboard` : 'https://mumalink.com/dashboard';
+
+  return await sendNotificationEmailSafe({
+    to: recipients,
+    subject: `[URGENT • MumaLINK] Critical Postpartum Risk Alert — ${mother.full_name} (${label})`,
+    html: buildBrandedEmailHtml({
+      badge: 'Urgent Clinical Escalation',
+      title: `Critical Alert: ${mother.full_name}`,
+      subtitle: `Immediate clinical review is required for ${mother.full_name} at ${label}.`,
+      rows: [
+        { label: 'Patient Name', value: mother.full_name },
+        { label: 'WhatsApp Phone', value: mother.phone_number },
+        { label: 'Facility', value: label },
+        { label: 'Escalation Trigger', value: reason },
+        { label: 'EPDS Score', value: score !== null && score !== undefined ? `${score} / 30` : 'Immediate Urgent Trigger' },
+        { label: 'Hospital Line', value: hosp.phone || mother.hospital_phone || 'See portal' }
+      ],
+      ctaLabel: 'Open Triage Dashboard',
+      ctaUrl: portalUrl
+    })
+  });
+}
+
+// =============================================================================
 // EPDS 10 CLINICAL QUESTIONS REFERENCE
 // =============================================================================
 const EPDS_QUESTIONS = [
@@ -290,7 +410,11 @@ app.get('/h/:subdomain', (req, res) => {
   res.redirect(`/login?hospital=${encodeURIComponent(slug)}`);
 });
 
-app.get(['/login', '/signup', '/register', '/auth'], (req, res) => {
+app.get(['/signup', '/register'], (_req, res) => {
+  res.redirect('/login');
+});
+
+app.get(['/login', '/auth'], (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'login.html'));
 });
 
@@ -412,54 +536,10 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-app.post('/api/auth/register', async (req, res) => {
-  const { full_name, email, password, role, hospital_id } = req.body;
-
-  if (!full_name || !email || !password) {
-    return res.status(400).json({ error: 'Name, email, and password are required.' });
-  }
-
-  try {
-    const existing = await pool.query('SELECT id FROM clinicians WHERE LOWER(email) = LOWER($1)', [email.trim()]);
-    if (existing.rows.length > 0) {
-      return res.status(400).json({ error: 'An account with this email already exists.' });
-    }
-
-    const id = 'doc_' + Date.now().toString(36);
-    const targetHospital = hospital_id || 'hosp_ondo_01';
-    const password_hash = await bcrypt.hash(password, 10);
-
-    await pool.query(`
-      INSERT INTO clinicians (id, hospital_id, full_name, email, password_hash, role)
-      VALUES ($1, $2, $3, $4, $5, $6)
-    `, [id, targetHospital, full_name.trim(), email.trim(), password_hash, role || 'Maternal Health Specialist']);
-
-    const { rows: hospRows } = await pool.query('SELECT name FROM hospitals WHERE id = $1', [targetHospital]);
-    const hospital_name = hospRows.length > 0 ? hospRows[0].name : 'Mother & Child Specialist Hospital';
-
-    const token = jwt.sign(
-      { id, hospital_id: targetHospital, hospital_name, full_name, email, role: role || 'Maternal Health Specialist' },
-      JWT_SECRET,
-      { expiresIn: '7d' }
-    );
-
-    res.json({
-      success: true,
-      token,
-      clinician: {
-        id,
-        hospital_id: targetHospital,
-        hospital_name,
-        full_name,
-        email,
-        role: role || 'Maternal Health Specialist'
-      }
-    });
-
-  } catch (err) {
-    console.error('Register error:', err);
-    res.status(500).json({ error: 'Registration failed.' });
-  }
+app.post('/api/auth/register', async (_req, res) => {
+  return res.status(403).json({
+    error: 'Public sign-up is disabled. Clinician accounts must be created by a MumaLINK Super Admin or an authorized Hospital team member on the dashboard.'
+  });
 });
 
 app.get('/api/auth/me', authenticateToken, async (req, res) => {
@@ -560,7 +640,46 @@ async function handleCreateHospital(req, res) {
       clinicianCreated = docRes.rows[0];
     }
 
-    res.json({ success: true, hospital: rows[0], clinician: clinicianCreated });
+    const portalSubdomainUrl = `https://${slug}.mumalink.com`;
+    const directPortalUrl = `https://mumalink.com/h/${slug}`;
+    const notifyList = [];
+    if (contact_email && contact_email.trim()) notifyList.push({ email: contact_email.trim(), name: name.trim() });
+    if (admin_email && admin_email.trim()) notifyList.push({ email: admin_email.trim(), name: admin_name?.trim() || name.trim() });
+    if (req.user?.email) notifyList.push({ email: req.user.email, name: req.user.full_name });
+
+    const emailRows = [
+      { label: 'Clinic / Hospital Name', value: name.trim() },
+      { label: 'State / Region', value: state.trim() },
+      { label: 'Emergency Line', value: phone?.trim() || 'Not provided' },
+      { label: 'Subdomain Portal', value: portalSubdomainUrl },
+      { label: 'Direct Login URL', value: directPortalUrl }
+    ];
+    if (clinicianCreated) {
+      emailRows.push({ label: 'Admin Full Name', value: clinicianCreated.full_name });
+      emailRows.push({ label: 'Admin Login Email', value: clinicianCreated.email });
+      emailRows.push({ label: 'Initial Password', value: admin_password });
+    }
+
+    const emailRes = await sendNotificationEmailSafe({
+      to: notifyList,
+      subject: `[MumaLINK] ${name.trim()} is Now Live on MumaLINK`,
+      html: buildBrandedEmailHtml({
+        badge: 'Clinic Live on MumaLINK',
+        title: `${name.trim()} is Now Live`,
+        subtitle: `Your clinic workspace has been created on MumaLINK. Authorized team members can sign in right away using your dedicated clinic portal link below.`,
+        rows: emailRows,
+        ctaLabel: 'Open Clinic Login Portal',
+        ctaUrl: directPortalUrl
+      })
+    });
+
+    res.json({
+      success: true,
+      hospital: rows[0],
+      clinician: clinicianCreated,
+      email_dispatched: Boolean(emailRes?.success),
+      email_recipients: emailRes?.recipients || []
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -568,6 +687,38 @@ async function handleCreateHospital(req, res) {
 
 app.post('/api/hospitals', authenticateToken, handleCreateHospital);
 app.post('/api/admin/hospitals', authenticateToken, handleCreateHospital);
+
+async function sendClinicianAccessEmail({ clinician, hospital, passwordProvided, updated }) {
+  const sub = hospital?.subdomain || '';
+  const portalUrl = sub ? `https://${sub}.mumalink.com` : 'https://mumalink.com/login';
+  const directUrl = sub ? `https://mumalink.com/h/${sub}` : 'https://mumalink.com/login';
+  const toList = [{ email: clinician.email, name: clinician.full_name }];
+  if (hospital?.contact_email) {
+    toList.push({ email: hospital.contact_email, name: hospital.name });
+  }
+
+  return await sendNotificationEmailSafe({
+    to: toList,
+    subject: `[MumaLINK] Your Clinician Portal Access for ${hospital?.name || 'MumaLINK'}`,
+    html: buildBrandedEmailHtml({
+      badge: updated ? 'Clinician Access Updated' : 'Clinician Account Created',
+      title: `Welcome, ${clinician.full_name}`,
+      subtitle: updated
+        ? `Your clinician account credentials for ${hospital?.name || 'your hospital'} on MumaLINK have been updated.`
+        : `You have been added to ${hospital?.name || 'your hospital'} on MumaLINK. Sign in using your authorized portal link below.`,
+      rows: [
+        { label: 'Hospital / Clinic', value: hospital?.name || clinician.hospital_id },
+        { label: 'Clinical Role', value: clinician.role },
+        { label: 'Login Email', value: clinician.email },
+        { label: 'Password', value: passwordProvided ? passwordProvided : 'Unchanged (use existing password)' },
+        { label: 'Portal Subdomain', value: portalUrl },
+        { label: 'Direct Login Link', value: directUrl }
+      ],
+      ctaLabel: 'Sign In to Clinic Portal',
+      ctaUrl: directUrl
+    })
+  });
+}
 
 // Create or Update Clinician Login for a Hospital (Super Admin only)
 app.post('/api/admin/clinicians', authenticateToken, async (req, res) => {
@@ -581,6 +732,9 @@ app.post('/api/admin/clinicians', authenticateToken, async (req, res) => {
   }
 
   try {
+    const { rows: hospRows } = await pool.query('SELECT id, name, subdomain, contact_email FROM hospitals WHERE id = $1 LIMIT 1', [hospital_id]);
+    const targetHospital = hospRows[0] || { id: hospital_id, name: hospital_id };
+
     const existing = await pool.query('SELECT id FROM clinicians WHERE LOWER(email) = LOWER($1) LIMIT 1', [email.trim()]);
     if (existing.rows.length > 0) {
       if (password && password.trim()) {
@@ -591,7 +745,8 @@ app.post('/api/admin/clinicians', authenticateToken, async (req, res) => {
           WHERE id = $5
           RETURNING id, full_name, email, role, hospital_id
         `, [full_name.trim(), hospital_id, role || 'Hospital Lead Clinician', passwordHash, existing.rows[0].id]);
-        return res.json({ success: true, clinician: rows[0], updated: true });
+        const emailRes = await sendClinicianAccessEmail({ clinician: rows[0], hospital: targetHospital, passwordProvided: password, updated: true });
+        return res.json({ success: true, clinician: rows[0], updated: true, email_dispatched: Boolean(emailRes?.success) });
       }
       const { rows } = await pool.query(`
         UPDATE clinicians
@@ -599,7 +754,8 @@ app.post('/api/admin/clinicians', authenticateToken, async (req, res) => {
         WHERE id = $4
         RETURNING id, full_name, email, role, hospital_id
       `, [full_name.trim(), hospital_id, role || 'Hospital Lead Clinician', existing.rows[0].id]);
-      return res.json({ success: true, clinician: rows[0], updated: true });
+      const emailRes = await sendClinicianAccessEmail({ clinician: rows[0], hospital: targetHospital, passwordProvided: null, updated: true });
+      return res.json({ success: true, clinician: rows[0], updated: true, email_dispatched: Boolean(emailRes?.success) });
     }
 
     if (!password || password.length < 6) {
@@ -614,13 +770,73 @@ app.post('/api/admin/clinicians', authenticateToken, async (req, res) => {
       RETURNING id, full_name, email, role, hospital_id
     `, [id, hospital_id, full_name.trim(), email.trim(), passwordHash, role || 'Hospital Lead Clinician']);
 
-    res.json({ success: true, clinician: rows[0], updated: false });
+    const emailRes = await sendClinicianAccessEmail({ clinician: rows[0], hospital: targetHospital, passwordProvided: password, updated: false });
+    res.json({ success: true, clinician: rows[0], updated: false, email_dispatched: Boolean(emailRes?.success) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// List clinicians across hospital or network (All authenticated clinicians)
+// Add Team Member by Hospital Member (Own Hospital) or Super Admin
+app.post('/api/clinicians', authenticateToken, async (req, res) => {
+  const isSuperAdmin = req.user.role === 'Super Admin';
+  const { full_name, email, password, role, hospital_id } = req.body;
+
+  if (!full_name || !full_name.trim() || !email || !email.trim()) {
+    return res.status(400).json({ error: 'Clinician full name and email are required.' });
+  }
+  if (!password || password.length < 6) {
+    return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+  }
+
+  const targetHospitalId = (isSuperAdmin && hospital_id && hospital_id !== 'all')
+    ? hospital_id
+    : req.user.hospital_id;
+
+  const requestedRole = (role && role.trim()) || 'Maternal Health Specialist';
+  const assignedRole = (!isSuperAdmin && requestedRole === 'Super Admin')
+    ? 'Maternal Health Specialist'
+    : requestedRole;
+
+  try {
+    const existing = await pool.query('SELECT id FROM clinicians WHERE LOWER(email) = LOWER($1) LIMIT 1', [email.trim()]);
+    if (existing.rows.length > 0) {
+      return res.status(400).json({ error: `A clinician account with email "${email.trim()}" already exists.` });
+    }
+
+    const { rows: hospRows } = await pool.query('SELECT id, name, subdomain, contact_email FROM hospitals WHERE id = $1 LIMIT 1', [targetHospitalId]);
+    if (hospRows.length === 0) {
+      return res.status(404).json({ error: 'Target hospital facility not found.' });
+    }
+    const targetHospital = hospRows[0];
+
+    const id = 'doc_' + Date.now().toString(36);
+    const passwordHash = await bcrypt.hash(password, 10);
+    const { rows } = await pool.query(`
+      INSERT INTO clinicians (id, hospital_id, full_name, email, password_hash, role)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      RETURNING id, full_name, email, role, hospital_id
+    `, [id, targetHospitalId, full_name.trim(), email.trim(), passwordHash, assignedRole]);
+
+    const emailRes = await sendClinicianAccessEmail({
+      clinician: rows[0],
+      hospital: targetHospital,
+      passwordProvided: password,
+      updated: false
+    });
+
+    res.json({
+      success: true,
+      clinician: rows[0],
+      email_dispatched: Boolean(emailRes?.success),
+      email_recipients: emailRes?.recipients || []
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// List clinicians (Super Admin can filter or inspect network; Hospital staff strictly see their own hospital)
 app.get('/api/clinicians', authenticateToken, async (req, res) => {
   const isSuperAdmin = req.user.role === 'Super Admin';
   const requestedHospital = req.query.hospital_id;
@@ -631,7 +847,7 @@ app.get('/api/clinicians', authenticateToken, async (req, res) => {
       filterHospital = requestedHospital;
     }
   } else {
-    filterHospital = (requestedHospital === 'all') ? null : (requestedHospital || req.user.hospital_id);
+    filterHospital = req.user.hospital_id;
   }
 
   try {
@@ -650,6 +866,90 @@ app.get('/api/clinicians', authenticateToken, async (req, res) => {
     const { rows } = await pool.query(query, params);
     res.json(rows);
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Super Admin Bird's-Eye Overview: Network & Per-Hospital KPIs, Mothers, and WhatsApp Chats
+app.get('/api/admin/overview', authenticateToken, async (req, res) => {
+  if (req.user.role !== 'Super Admin') {
+    return res.status(403).json({ error: 'Only Super Administrators can access the network overview.' });
+  }
+
+  const requestedHospital = req.query.hospital_id;
+  const filterHospital = (requestedHospital && requestedHospital !== 'all') ? requestedHospital : null;
+
+  try {
+    const params = filterHospital ? [filterHospital] : [];
+    const hospWhereM = filterHospital ? 'WHERE m.hospital_id = $1' : '';
+    const hospWhereW = filterHospital ? 'WHERE m.hospital_id = $1' : '';
+    const hospWhereC = filterHospital ? 'WHERE c.hospital_id = $1' : '';
+
+    const [hospRes, kpiRes, clinCountRes, msgCountRes, mothersRes, recentMsgsRes] = await Promise.all([
+      filterHospital
+        ? pool.query('SELECT * FROM hospitals WHERE id = $1', [filterHospital])
+        : pool.query('SELECT COUNT(*)::int AS total_hospitals FROM hospitals'),
+      pool.query(`
+        SELECT
+          COUNT(*)::int AS total_mothers,
+          COALESCE(SUM(CASE WHEN current_risk_tier = 'critical' THEN 1 ELSE 0 END), 0)::int AS critical_count,
+          COALESCE(SUM(CASE WHEN current_risk_tier = 'moderate' THEN 1 ELSE 0 END), 0)::int AS moderate_count,
+          COALESCE(SUM(CASE WHEN current_risk_tier = 'normal' THEN 1 ELSE 0 END), 0)::int AS normal_count
+        FROM mothers m
+        ${hospWhereM}
+      `, params),
+      pool.query(`SELECT COUNT(*)::int AS total_clinicians FROM clinicians c ${hospWhereC}`, params),
+      pool.query(`
+        SELECT COUNT(*)::int AS total_messages
+        FROM whatsapp_messages w
+        JOIN mothers m ON w.mother_id = m.id
+        ${hospWhereW}
+      `, params),
+      pool.query(`
+        SELECT m.*,
+          h.name AS hospital_name,
+          h.subdomain AS hospital_subdomain,
+          (SELECT COUNT(*)::int FROM whatsapp_messages wm WHERE wm.mother_id = m.id) AS messages_count,
+          (SELECT wm.message FROM whatsapp_messages wm WHERE wm.mother_id = m.id ORDER BY wm.created_at DESC LIMIT 1) AS last_whatsapp_message,
+          (SELECT wm.created_at FROM whatsapp_messages wm WHERE wm.mother_id = m.id ORDER BY wm.created_at DESC LIMIT 1) AS last_message_at,
+          (SELECT wm.sender_type FROM whatsapp_messages wm WHERE wm.mother_id = m.id ORDER BY wm.created_at DESC LIMIT 1) AS last_sender_type
+        FROM mothers m
+        JOIN hospitals h ON m.hospital_id = h.id
+        ${hospWhereM}
+        ORDER BY
+          CASE m.current_risk_tier WHEN 'critical' THEN 1 WHEN 'moderate' THEN 2 WHEN 'normal' THEN 3 ELSE 4 END,
+          COALESCE((SELECT MAX(wm.created_at) FROM whatsapp_messages wm WHERE wm.mother_id = m.id), m.last_checkin_date, m.delivery_date::timestamp) DESC
+      `, params),
+      pool.query(`
+        SELECT w.*, m.full_name AS mother_name, m.phone_number AS mother_phone, h.name AS hospital_name, h.subdomain AS hospital_subdomain
+        FROM whatsapp_messages w
+        JOIN mothers m ON w.mother_id = m.id
+        JOIN hospitals h ON m.hospital_id = h.id
+        ${hospWhereW}
+        ORDER BY w.created_at DESC
+        LIMIT 40
+      `, params)
+    ]);
+
+    const selectedHospital = filterHospital ? (hospRes.rows[0] || null) : null;
+    const totalHospitals = filterHospital ? (selectedHospital ? 1 : 0) : (hospRes.rows[0]?.total_hospitals || 0);
+
+    res.json({
+      hospital: selectedHospital,
+      stats: {
+        total_hospitals: totalHospitals,
+        total_mothers: kpiRes.rows[0]?.total_mothers || 0,
+        critical_count: kpiRes.rows[0]?.critical_count || 0,
+        moderate_count: kpiRes.rows[0]?.moderate_count || 0,
+        normal_count: kpiRes.rows[0]?.normal_count || 0,
+        total_clinicians: clinCountRes.rows[0]?.total_clinicians || 0,
+        total_messages: msgCountRes.rows[0]?.total_messages || 0
+      },
+      mothers: mothersRes.rows,
+      recent_messages: recentMsgsRes.rows
+    });
+  } catch (err) {
+    console.error('Admin overview error:', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -1079,9 +1379,10 @@ app.post('/api/mothers', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'A mother with this phone number is already enrolled.' });
     }
 
-    const { rows: hospRows } = await pool.query('SELECT name, phone FROM hospitals WHERE id = $1', [hospital_id]);
+    const { rows: hospRows } = await pool.query('SELECT name, phone, subdomain FROM hospitals WHERE id = $1', [hospital_id]);
     const hospitalName = hospRows.length > 0 ? hospRows[0].name : 'Mother & Child Hospital';
     const hospitalPhone = hospRows.length > 0 ? hospRows[0].phone : null;
+    const hospitalSubdomain = hospRows.length > 0 ? hospRows[0].subdomain : null;
 
     await pool.query(`
       INSERT INTO mothers (
@@ -1116,6 +1417,28 @@ app.post('/api/mothers', authenticateToken, async (req, res) => {
       placeholders: [motherObj.full_name, hospitalName]
     });
 
+    const enrollRecipients = await getHospitalRecipients(hospital_id);
+    const portalDashUrl = hospitalSubdomain ? `https://${hospitalSubdomain}.mumalink.com/dashboard` : 'https://mumalink.com/dashboard';
+    await sendNotificationEmailSafe({
+      to: enrollRecipients,
+      subject: `[MumaLINK Enrollment] ${motherObj.full_name} Enrolled for 42-Day Postpartum Surveillance`,
+      html: buildBrandedEmailHtml({
+        badge: 'Patient Post-Discharge Enrollment',
+        title: `New Mother Enrolled: ${motherObj.full_name}`,
+        subtitle: `Enrolled at ${hospitalName} by ${req.user.full_name}. Immediate WhatsApp post-discharge greeting was triggered.`,
+        rows: [
+          { label: 'Mother Name', value: motherObj.full_name },
+          { label: 'Baby Name', value: motherObj.baby_name || 'Not specified' },
+          { label: 'WhatsApp Phone', value: normalizedPhone },
+          { label: 'Delivery Date', value: delivery_date },
+          { label: 'Delivery Type', value: delivery_type || 'Spontaneous Vaginal Delivery' },
+          { label: 'WhatsApp Greeting', value: (dispatchResult && (dispatchResult.success || dispatchResult.simulated)) ? 'Dispatched immediately' : 'Queued / Fallback logged' }
+        ],
+        ctaLabel: 'View Patient in Triage Dashboard',
+        ctaUrl: portalDashUrl
+      })
+    });
+
     console.log(`[Enrollment] Mother ${motherObj.full_name} enrolled (${normalizedPhone}). Immediate WhatsApp greeting dispatched.`);
 
     res.json({
@@ -1137,6 +1460,7 @@ app.post('/api/mothers', authenticateToken, async (req, res) => {
 app.post('/api/mothers/:id/notes', authenticateToken, async (req, res) => {
   const { id } = req.params;
   const { action_type, note, resolved_alert } = req.body;
+  const isSuperAdmin = req.user.role === 'Super Admin';
 
   if (!note || !note.trim()) {
     return res.status(400).json({ error: 'Clinical note cannot be empty.' });
@@ -1146,6 +1470,15 @@ app.post('/api/mothers/:id/notes', authenticateToken, async (req, res) => {
   const clinician_name = req.user.full_name;
 
   try {
+    const motherRes = isSuperAdmin
+      ? await pool.query('SELECT m.*, h.name as hospital_name, h.subdomain as hospital_subdomain FROM mothers m LEFT JOIN hospitals h ON m.hospital_id = h.id WHERE m.id = $1', [id])
+      : await pool.query('SELECT m.*, h.name as hospital_name, h.subdomain as hospital_subdomain FROM mothers m LEFT JOIN hospitals h ON m.hospital_id = h.id WHERE m.id = $1 AND m.hospital_id = $2', [id, req.user.hospital_id]);
+
+    if (motherRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Mother record not found or unauthorized.' });
+    }
+    const mother = motherRes.rows[0];
+
     await pool.query(`
       INSERT INTO clinical_notes (id, mother_id, clinician_name, action_type, note, resolved_alert)
       VALUES ($1, $2, $3, $4, $5, $6)
@@ -1159,6 +1492,27 @@ app.post('/api/mothers/:id/notes', authenticateToken, async (req, res) => {
     }
 
     await pool.query('UPDATE mothers SET notes_count = notes_count + 1 WHERE id = $1', [id]);
+
+    const recipients = await getHospitalRecipients(mother.hospital_id);
+    const dashUrl = mother.hospital_subdomain ? `https://${mother.hospital_subdomain}.mumalink.com/dashboard` : 'https://mumalink.com/dashboard';
+    await sendNotificationEmailSafe({
+      to: recipients,
+      subject: `[MumaLINK Triage Update] Clinical Note Logged for ${mother.full_name}`,
+      html: buildBrandedEmailHtml({
+        badge: 'Clinical Intervention Logged',
+        title: `Triage Update: ${mother.full_name}`,
+        subtitle: `${clinician_name} recorded a clinical intervention note at ${mother.hospital_name || 'your facility'}.`,
+        rows: [
+          { label: 'Patient', value: mother.full_name },
+          { label: 'Clinician', value: clinician_name },
+          { label: 'Action Type', value: action_type || 'observation' },
+          { label: 'Clinical Note', value: note.trim() },
+          { label: 'Alert Stepped Down', value: resolved_alert ? 'Yes (Moved from Critical to Moderate)' : 'No' }
+        ],
+        ctaLabel: 'Open Patient Record',
+        ctaUrl: dashUrl
+      })
+    });
 
     res.json({ success: true, note_id: noteId });
 
@@ -1227,17 +1581,16 @@ async function sendWhatsAppAndLog(mother, text, sender_type = 'bot', sender_name
 // 6. Direct Trigger: Send WhatsApp Check-in to Mother from Dashboard
 app.post('/api/mothers/:id/send-checkin', authenticateToken, async (req, res) => {
   const { id } = req.params;
+  const isSuperAdmin = req.user.role === 'Super Admin';
 
   try {
-    const { rows } = await pool.query(`
-      SELECT m.*, h.name as hospital_name,
-             (CURRENT_DATE - m.delivery_date) as postpartum_days
-      FROM mothers m
-      JOIN hospitals h ON m.hospital_id = h.id
-      WHERE m.id = $1
-    `, [id]);
+    const querySql = isSuperAdmin
+      ? `SELECT m.*, h.name as hospital_name, (CURRENT_DATE - m.delivery_date) as postpartum_days FROM mothers m JOIN hospitals h ON m.hospital_id = h.id WHERE m.id = $1`
+      : `SELECT m.*, h.name as hospital_name, (CURRENT_DATE - m.delivery_date) as postpartum_days FROM mothers m JOIN hospitals h ON m.hospital_id = h.id WHERE m.id = $1 AND m.hospital_id = $2`;
+    const params = isSuperAdmin ? [id] : [id, req.user.hospital_id];
+    const { rows } = await pool.query(querySql, params);
 
-    if (rows.length === 0) return res.status(404).json({ error: 'Mother not found' });
+    if (rows.length === 0) return res.status(404).json({ error: 'Mother not found or unauthorized.' });
     const mother = rows[0];
     const days = parseInt(mother.postpartum_days, 10) || 0;
     const isInitial = !mother.last_checkin_date || days <= 5;
@@ -1556,6 +1909,10 @@ Hospital Emergency Line: ${mother.hospital_phone || 'your maternity clinic'}
 You are not alone, and your care team is standing by.`;
 
     await sendWhatsAppAndLog(mother, alertMsg, 'bot', 'MumaLINK Alert System');
+    await sendCriticalRiskAlertEmail(mother, {
+      reason: `Immediate Help Keyword Triggered ("${incomingText.slice(0, 80)}")`,
+      score: Math.max(parseInt(mother.last_score, 10) || 0, 16)
+    });
     return;
   }
 
@@ -1787,6 +2144,14 @@ Your screening indicates healthy emotional recovery and coping. We will continue
     }
 
     await sendWhatsAppAndLog(mother, completionMsg, 'bot', 'MumaLINK Care Bot');
+    if (finalTier === 'critical') {
+      await sendCriticalRiskAlertEmail(mother, {
+        reason: a.q10_selfharm > 0
+          ? 'EPDS Screening Completed (Question 10 Self-Harm Risk Flagged)'
+          : 'EPDS Screening Completed (Score >= 13 Critical Threshold)',
+        score: totalScore
+      });
+    }
     console.log(`[Screening Complete] ${mother.full_name} -> Score: ${totalScore}/30 Tier: ${finalTier.toUpperCase()}`);
     return;
   }
@@ -1875,10 +2240,15 @@ app.post(WEBHOOK_PATHS, async (req, res) => {
 // =============================================================================
 app.post('/api/simulate-checkin', authenticateToken, async (req, res) => {
   const { mother_id, scenario } = req.body;
+  const isSuperAdmin = req.user.role === 'Super Admin';
 
   try {
-    const { rows } = await pool.query('SELECT * FROM mothers WHERE id = $1', [mother_id]);
-    if (rows.length === 0) return res.status(404).json({ error: 'Mother not found' });
+    const querySql = isSuperAdmin
+      ? 'SELECT m.*, h.name as hospital_name, h.phone as hospital_phone FROM mothers m LEFT JOIN hospitals h ON m.hospital_id = h.id WHERE m.id = $1'
+      : 'SELECT m.*, h.name as hospital_name, h.phone as hospital_phone FROM mothers m LEFT JOIN hospitals h ON m.hospital_id = h.id WHERE m.id = $1 AND m.hospital_id = $2';
+    const params = isSuperAdmin ? [mother_id] : [mother_id, req.user.hospital_id];
+    const { rows } = await pool.query(querySql, params);
+    if (rows.length === 0) return res.status(404).json({ error: 'Mother not found or unauthorized.' });
 
     const mother = rows[0];
     let score = 4;
@@ -1937,6 +2307,13 @@ app.post('/api/simulate-checkin', authenticateToken, async (req, res) => {
       sender_name: 'MumaLINK Bot',
       message: `Screening evaluation completed. EPDS Score: ${score}/30. Status: ${tier.toUpperCase()}.`
     });
+
+    if (tier === 'critical') {
+      await sendCriticalRiskAlertEmail(mother, {
+        reason: 'Simulated Severe Postpartum Distress Check-in',
+        score
+      });
+    }
 
     res.json({
       success: true,

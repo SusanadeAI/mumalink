@@ -606,7 +606,7 @@
 
   <!-- Clinical Team Directory Modal -->
   <div id="clinicalTeamModalOverlay" class="modal-overlay">
-    <div class="modal-card modal-card-wide">
+    <div class="modal-card modal-card-wide" style="max-height: 90vh; overflow-y: auto;">
       <div class="modal-header">
         <div>
           <h2 class="modal-title">Clinical Care Team Directory</h2>
@@ -617,6 +617,47 @@
         </button>
       </div>
       <div class="modal-body">
+        <form id="addTeamMemberForm" style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 10px; padding: 14px; margin-bottom: 16px;">
+          <div style="font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #334155; margin-bottom: 10px;">
+            Add Authorized Hospital Team Member
+          </div>
+          <div class="form-row-2">
+            <div class="form-group">
+              <label class="form-label" for="teamMemberName">Clinician Full Name</label>
+              <input type="text" id="teamMemberName" class="form-input" placeholder="e.g. Dr. Folake Adeyemi" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="teamMemberEmail">Work Login Email</label>
+              <input type="email" id="teamMemberEmail" class="form-input" placeholder="folake@hospital.org" required>
+            </div>
+          </div>
+          <div class="form-row-2">
+            <div class="form-group">
+              <label class="form-label" for="teamMemberRole">Clinical Role</label>
+              <select id="teamMemberRole" class="form-select">
+                <option value="Maternal Health Specialist">Maternal Health Specialist</option>
+                <option value="Hospital Lead Clinician">Hospital Lead Clinician</option>
+                <option value="Consultant Obstetrician">Consultant Obstetrician</option>
+                <option value="Postnatal Nurse Lead">Postnatal Nurse Lead</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="teamMemberPassword">Initial Login Password</label>
+              <input type="password" id="teamMemberPassword" class="form-input" minlength="6" placeholder="Minimum 6 characters" required>
+            </div>
+          </div>
+          <div class="form-group" id="teamMemberHospitalGroup" style="display: none;">
+            <label class="form-label" for="teamMemberHospitalSelect">Assigned Hospital Facility</label>
+            <select id="teamMemberHospitalSelect" class="form-select"></select>
+          </div>
+          <div style="display: flex; justify-content: flex-end; margin-top: 8px;">
+            <button type="submit" id="submitTeamMemberBtn" class="btn btn-primary-pill">
+              <i data-lucide="user-plus"></i>
+              <span>Add Team Member &amp; Email Credentials</span>
+            </button>
+          </div>
+        </form>
+
         <div class="clinical-team-list" id="clinicalTeamList">
           <div class="loading-state">Loading clinical team from PostgreSQL...</div>
         </div>

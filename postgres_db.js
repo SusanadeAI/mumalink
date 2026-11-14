@@ -155,10 +155,28 @@ async function initPostgresDatabase() {
       );
     }
 
-    // Ensure primary owner account has Super Admin privileges
+    // Ensure primary owner & Akomolafe Super Admin accounts exist with Super Admin privileges
     await client.query(
       "UPDATE clinicians SET role = 'Super Admin' WHERE LOWER(email) = 'susanadefinance@gmail.com'"
     );
+
+    const { rows: akomHosp } = await client.query('SELECT id FROM hospitals ORDER BY created_at ASC LIMIT 1');
+    if (akomHosp.length > 0) {
+      const defaultSuperHash = await bcrypt.hash('AdminPassword123!', 10);
+      await client.query(`
+        INSERT INTO clinicians (id, hospital_id, full_name, email, password_hash, role)
+        VALUES ('admin_akomolafe', $1, 'Dr. Akomolafe Motilayo', 'akomolafe@mumalink.com', $2, 'Super Admin')
+        ON CONFLICT (email) DO UPDATE
+        SET full_name = 'Dr. Akomolafe Motilayo', role = 'Super Admin', password_hash = $2;
+      `, [akomHosp[0].id, defaultSuperHash]);
+
+      await client.query(`
+        INSERT INTO clinicians (id, hospital_id, full_name, email, password_hash, role)
+        VALUES ('admin_super', $1, 'Dr. Akomolafe Motilayo (Super Admin)', 'admin@mumalink.com', $2, 'Super Admin')
+        ON CONFLICT (email) DO UPDATE
+        SET full_name = 'Dr. Akomolafe Motilayo (Super Admin)', role = 'Super Admin', password_hash = $2;
+      `, [akomHosp[0].id, defaultSuperHash]);
+    }
 
     // Seed default records if empty
     const { rows } = await client.query('SELECT COUNT(*) as count FROM hospitals');
@@ -208,12 +226,18 @@ async function seedPostgresData(client) {
     'Lead Maternal Health Specialist'
   ]);
 
-  // 3. Super Admin: admin@mumalink.com / AdminPassword123!
+  // 3. Super Admins (Akomolafe): akomolafe@mumalink.com & admin@mumalink.com / AdminPassword123!
   const adminPasswordHash = await bcrypt.hash('AdminPassword123!', 10);
   await client.query(`
     INSERT INTO clinicians (id, hospital_id, full_name, email, password_hash, role)
-    VALUES ('admin_super', 'hosp_ondo_01', 'MumaLINK System Administrator', 'admin@mumalink.com', $1, 'Super Admin')
-    ON CONFLICT (email) DO UPDATE SET password_hash = $1, role = 'Super Admin', full_name = 'MumaLINK System Administrator';
+    VALUES ('admin_akomolafe', 'hosp_ondo_01', 'Dr. Akomolafe Motilayo', 'akomolafe@mumalink.com', $1, 'Super Admin')
+    ON CONFLICT (email) DO UPDATE SET password_hash = $1, role = 'Super Admin', full_name = 'Dr. Akomolafe Motilayo';
+  `, [adminPasswordHash]);
+
+  await client.query(`
+    INSERT INTO clinicians (id, hospital_id, full_name, email, password_hash, role)
+    VALUES ('admin_super', 'hosp_ondo_01', 'Dr. Akomolafe Motilayo (Super Admin)', 'admin@mumalink.com', $1, 'Super Admin')
+    ON CONFLICT (email) DO UPDATE SET password_hash = $1, role = 'Super Admin', full_name = 'Dr. Akomolafe Motilayo (Super Admin)';
   `, [adminPasswordHash]);
 
   console.log('PostgreSQL default hospitals, clinician, and super admin verified.');

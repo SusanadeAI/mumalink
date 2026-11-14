@@ -470,6 +470,10 @@ function setupEventListeners() {
 
   // Note submission form
   if (addNoteForm) addNoteForm.addEventListener('submit', handleAddNoteSubmit);
+
+  // Hospital Clinical Team member creation form
+  const addTeamMemberForm = document.getElementById('addTeamMemberForm');
+  if (addTeamMemberForm) addTeamMemberForm.addEventListener('submit', handleAddTeamMemberSubmit);
 }
 
 // Authenticated fetch wrapper
@@ -512,6 +516,14 @@ async function loadHospitalsList() {
       // Populate hospital select inside enroll modal
       if (enrollHospitalSelect) {
         enrollHospitalSelect.innerHTML = partnerHospitals.map(h => 
+          `<option value="${h.id}">${escapeHtml(h.name)}</option>`
+        ).join('');
+      }
+
+      // Populate hospital select inside add-team-member form (Super Admin only)
+      const teamMemberHospitalSelect = document.getElementById('teamMemberHospitalSelect');
+      if (teamMemberHospitalSelect) {
+        teamMemberHospitalSelect.innerHTML = partnerHospitals.map(h =>
           `<option value="${h.id}">${escapeHtml(h.name)}</option>`
         ).join('');
       }
@@ -1161,6 +1173,14 @@ async function handleEnrollSubmit(e) {
 // ==========================================================================
 async function loadClinicalTeam() {
   const listEl = document.getElementById('clinicalTeamList');
+  const teamHospGroup = document.getElementById('teamMemberHospitalGroup');
+  const teamHospSelect = document.getElementById('teamMemberHospitalSelect');
+  if (teamHospGroup) {
+    teamHospGroup.style.display = isSuperAdmin ? 'block' : 'none';
+  }
+  if (teamHospSelect && activeHospitalId && activeHospitalId !== 'all') {
+    teamHospSelect.value = activeHospitalId;
+  }
   if (!listEl) return;
   listEl.innerHTML = `<div class="loading-state">Loading clinical team from PostgreSQL...</div>`;
 
@@ -1204,6 +1224,44 @@ async function loadClinicalTeam() {
   } catch (err) {
     console.error('Load clinical team error:', err);
     listEl.innerHTML = `<div class="empty-state">Failed to fetch clinical team directory.</div>`;
+  }
+}
+
+async function handleAddTeamMemberSubmit(e) {
+  e.preventDefault();
+  const full_name = document.getElementById('teamMemberName')?.value?.trim();
+  const email = document.getElementById('teamMemberEmail')?.value?.trim();
+  const role = document.getElementById('teamMemberRole')?.value;
+  const password = document.getElementById('teamMemberPassword')?.value || '';
+  const teamHospSelect = document.getElementById('teamMemberHospitalSelect');
+  const hospital_id = (isSuperAdmin && teamHospSelect?.value) ? teamHospSelect.value : undefined;
+
+  const btn = document.getElementById('submitTeamMemberBtn');
+  if (btn) btn.disabled = true;
+
+  try {
+    const res = await authFetch('/api/clinicians', {
+      method: 'POST',
+      body: JSON.stringify({ full_name, email, role, password, hospital_id })
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      showToast(data.error || 'Failed to add clinician account.');
+      return;
+    }
+
+    document.getElementById('addTeamMemberForm')?.reset();
+    showToast(
+      data.email_dispatched
+        ? `Added ${data.clinician.full_name} and emailed login credentials.`
+        : `Added ${data.clinician.full_name} to clinical team.`
+    );
+    await loadClinicalTeam();
+  } catch (err) {
+    console.error('Add team member error:', err);
+    showToast('Network error adding clinician account.');
+  } finally {
+    if (btn) btn.disabled = false;
   }
 }
 
@@ -1426,7 +1484,11 @@ async function handleAddHospitalSubmit(e) {
       if (clinicLiveSuccessView) clinicLiveSuccessView.style.display = '';
       renderIcons();
 
-      showToast(`Clinic "${data.hospital?.name || name}" is live on MumaLINK.`);
+      showToast(
+        data.email_dispatched
+          ? `Clinic "${data.hospital?.name || name}" is live on MumaLINK. Setup email sent.`
+          : `Clinic "${data.hospital?.name || name}" is live on MumaLINK.`
+      );
       await loadHospitalsList();
       activeHospitalId = data.hospital.id;
       if (hospitalContextSelector) hospitalContextSelector.value = activeHospitalId;
