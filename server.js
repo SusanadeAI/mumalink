@@ -2,11 +2,102 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const axios = require('axios');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { pool, initPostgresDatabase } = require('./postgres_db');
 const sendpulse = require('./sendpulse');
 const infobip = require('./infobip');
+
+function normalizePhoneNumber(raw) {
+  let digits = String(raw || '').replace(/[^\d+]/g, '').replace(/^\+/, '');
+  if (/^0[789][01]\d{8}$/.test(digits)) {
+    digits = '234' + digits.slice(1);
+  }
+  return digits ? '+' + digits : '';
+}
+
+const MOOD_OPTIONS = [
+  { code: '1', label: 'Happy / Peaceful', negative: false, keywords: ['happy', 'peaceful', 'good', 'great', 'fine', 'blessed', 'okay', 'well'] },
+  { code: '2', label: 'Tired but coping', negative: false, keywords: ['tired but coping', 'coping', 'managing'] },
+  { code: '3', label: 'Unhappy / Overwhelmed', negative: true, keywords: ['not happy', 'not good', 'not well', 'not okay', 'unhappy', 'overwhelmed', 'struggling', 'exhausted', 'bad'] },
+  { code: '4', label: 'Anxious / Worried', negative: true, keywords: ['anxious', 'worried', 'worry', 'restless', 'panicky', 'panic', 'scared', 'stressed', 'stress'] },
+  { code: '5', label: 'Sad / Low mood', negative: true, keywords: ['sad', 'depressed', 'low mood', 'crying', 'cry', 'miserable', 'down', 'lonely', 'hopeless', 'helpless'] }
+];
+
+function buildInitialGreetingMessage(mother) {
+  const hospitalName = mother.hospital_name || 'Mother & Child Hospital';
+  const babyLine = mother.baby_name
+    ? `We celebrate with you and baby ${mother.baby_name} on your safe delivery from ${hospitalName}.`
+    : `You just delivered from ${hospitalName}, and your care team is checking in on you.`;
+  return `Congratulations Mommy ${mother.full_name}!
+${babyLine}
+
+How are you feeling today? (You can select one or multiple options):
+1 - Happy / Peaceful
+2 - Tired but coping
+3 - Unhappy / Overwhelmed
+4 - Anxious / Worried
+5 - Sad / Low mood
+
+Reply with one or more numbers (e.g. 1, 2 or 3, 4) or describe how you feel.`;
+}
+
+function buildFollowupGreetingMessage(mother) {
+  const hospitalName = mother.hospital_name || 'Mother & Child Hospital';
+  return `Good day Mommy ${mother.full_name}.
+This is your follow-up wellness check-in from ${hospitalName}.
+
+How are you feeling today? (You can select one or more options):
+1 - Happy / Peaceful
+2 - Tired but coping
+3 - Unhappy / Overwhelmed
+4 - Anxious / Worried
+5 - Sad / Low mood
+
+Reply with one or more numbers (e.g. 1, 2 or 3, 4) or describe how you feel.`;
+}
+
+function parseMoodSelection(incomingText) {
+  const lower = String(incomingText || '').toLowerCase().trim();
+  const matched = new Map();
+
+  // Extract explicit option numbers (e.g. "1", "3, 4", "3 5")
+  const digitMatches = lower.match(/\b[1-5]\b/g) || [];
+  digitMatches.forEach(d => {
+    const opt = MOOD_OPTIONS.find(o => o.code === d);
+    if (opt) matched.set(opt.code, opt);
+  });
+  if (matched.size === 0 && /^[1-5\s,&+]+$/.test(lower)) {
+    for (const ch of lower) {
+      const opt = MOOD_OPTIONS.find(o => o.code === ch);
+      if (opt) matched.set(opt.code, opt);
+    }
+  }
+
+  // Mask negated positives before keyword scanning so "not happy" does not match "happy"
+  const maskedNegative = lower.includes('not happy') || lower.includes('not good') || lower.includes('not well') || lower.includes('not okay');
+  for (const opt of MOOD_OPTIONS) {
+    if (!opt.negative && maskedNegative) continue;
+    if (opt.keywords.some(kw => new RegExp(`\\b${kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(lower))) {
+      matched.set(opt.code, opt);
+    }
+  }
+
+  // Standalone "tired" without "coping" or "managing" counts as exhaustion distress
+  if (/\btired\b/i.test(lower) && !matched.has('2')) {
+    const opt3 = MOOD_OPTIONS.find(o => o.code === '3');
+    if (opt3) matched.set(opt3.code, opt3);
+  }
+
+  const selections = Array.from(matched.values());
+  return {
+    selections,
+    labels: selections.map(s => `${s.code} (${s.label})`),
+    hasNegative: selections.some(s => s.negative),
+    hasPositive: selections.some(s => !s.negative)
+  };
+}
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -352,19 +443,34 @@ app.post('/api/hospitals', authenticateToken, async (req, res) => {
   }
 });
 
-// List clinicians across network (Super Admin only)
+// List clinicians across hospital or network (All authenticated clinicians)
 app.get('/api/clinicians', authenticateToken, async (req, res) => {
-  if (req.user.role !== 'Super Admin') {
-    return res.status(403).json({ error: 'Super Admin access required to view clinician directory.' });
+  const isSuperAdmin = req.user.role === 'Super Admin';
+  const requestedHospital = req.query.hospital_id;
+  let filterHospital = null;
+
+  if (isSuperAdmin) {
+    if (requestedHospital && requestedHospital !== 'all') {
+      filterHospital = requestedHospital;
+    }
+  } else {
+    filterHospital = (requestedHospital === 'all') ? null : (requestedHospital || req.user.hospital_id);
   }
 
   try {
-    const { rows } = await pool.query(`
-      SELECT c.id, c.full_name, c.email, c.role, c.hospital_id, h.name as hospital_name
+    let query = `
+      SELECT c.id, c.full_name, c.email, c.role, c.hospital_id, c.created_at, h.name as hospital_name
       FROM clinicians c
       LEFT JOIN hospitals h ON c.hospital_id = h.id
-      ORDER BY c.created_at DESC
-    `);
+    `;
+    const params = [];
+    if (filterHospital) {
+      params.push(filterHospital);
+      query += ' WHERE c.hospital_id = $1';
+    }
+    query += ' ORDER BY c.created_at DESC';
+
+    const { rows } = await pool.query(query, params);
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -455,6 +561,187 @@ app.get('/api/stats', authenticateToken, async (req, res) => {
   }
 });
 
+// Live Clinical Triage Notifications from PostgreSQL (checkins, clinical notes, whatsapp messages)
+app.get('/api/notifications', authenticateToken, async (req, res) => {
+  const isSuperAdmin = req.user.role === 'Super Admin';
+  const requestedHospital = req.query.hospital_id;
+  let filterHospital = null;
+  if (!isSuperAdmin) {
+    filterHospital = req.user.hospital_id;
+  } else if (requestedHospital && requestedHospital !== 'all') {
+    filterHospital = requestedHospital;
+  }
+
+  try {
+    const params = filterHospital ? [filterHospital] : [];
+    const hospWhere = filterHospital ? 'WHERE m.hospital_id = $1' : '';
+
+    const [checkinsRes, notesRes, msgsRes] = await Promise.all([
+      pool.query(`
+        SELECT c.id, c.mother_id, c.checkin_day_label, c.epds_score, c.risk_tier, c.mother_notes, c.created_at,
+               m.full_name as mother_name
+        FROM checkins c
+        JOIN mothers m ON c.mother_id = m.id
+        ${hospWhere}
+        ORDER BY c.created_at DESC
+        LIMIT 12
+      `, params),
+      pool.query(`
+        SELECT n.id, n.mother_id, n.clinician_name, n.action_type, n.note, n.resolved_alert, n.created_at,
+               m.full_name as mother_name
+        FROM clinical_notes n
+        JOIN mothers m ON n.mother_id = m.id
+        ${hospWhere}
+        ORDER BY n.created_at DESC
+        LIMIT 12
+      `, params),
+      pool.query(`
+        SELECT w.id, w.mother_id, w.direction, w.sender_type, w.sender_name, w.message, w.created_at,
+               m.full_name as mother_name
+        FROM whatsapp_messages w
+        JOIN mothers m ON w.mother_id = m.id
+        ${hospWhere}
+        ORDER BY w.created_at DESC
+        LIMIT 12
+      `, params)
+    ]);
+
+    const notifications = [];
+
+    checkinsRes.rows.forEach(c => {
+      const severity = c.risk_tier === 'critical' ? 'critical' : (c.risk_tier === 'moderate' ? 'moderate' : 'normal');
+      const title = c.risk_tier === 'critical'
+        ? `Critical Risk Flagged — ${c.mother_name}`
+        : (c.risk_tier === 'moderate' ? `Moderate Distress Flagged — ${c.mother_name}` : `Check-in Completed — ${c.mother_name}`);
+      const noteSnippet = c.mother_notes ? ` — ${String(c.mother_notes).slice(0, 120)}` : '';
+      notifications.push({
+        id: 'chk_' + c.id,
+        type: 'checkin',
+        severity,
+        mother_id: c.mother_id,
+        title,
+        description: `${c.checkin_day_label} (EPDS ${c.epds_score}/30)${noteSnippet}`,
+        created_at: c.created_at
+      });
+    });
+
+    notesRes.rows.forEach(n => {
+      notifications.push({
+        id: 'note_' + n.id,
+        type: 'note',
+        severity: 'info',
+        mother_id: n.mother_id,
+        title: `Intervention Logged — ${n.mother_name}`,
+        description: `${n.clinician_name} (${n.action_type}): ${String(n.note).slice(0, 120)}`,
+        created_at: n.created_at
+      });
+    });
+
+    msgsRes.rows.forEach(w => {
+      const isInbound = w.direction === 'inbound';
+      notifications.push({
+        id: 'msg_' + w.id,
+        type: 'whatsapp',
+        severity: isInbound ? 'info' : 'normal',
+        mother_id: w.mother_id,
+        title: isInbound ? `Inbound WhatsApp — ${w.mother_name}` : `WhatsApp Dispatched — ${w.mother_name}`,
+        description: String(w.message || '').slice(0, 140),
+        created_at: w.created_at
+      });
+    });
+
+    notifications.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    res.json(notifications.slice(0, 20));
+  } catch (err) {
+    console.error('Notifications query error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Live Hospital Facility Settings (PostgreSQL + Infobip Gateway Status)
+app.get('/api/hospital-settings', authenticateToken, async (req, res) => {
+  const isSuperAdmin = req.user.role === 'Super Admin';
+  const requestedHospital = req.query.hospital_id;
+  let targetHospitalId = req.user.hospital_id;
+
+  if (isSuperAdmin && requestedHospital && requestedHospital !== 'all') {
+    targetHospitalId = requestedHospital;
+  }
+
+  try {
+    let { rows } = await pool.query(`
+      SELECT h.*,
+        (SELECT COUNT(*)::int FROM mothers m WHERE m.hospital_id = h.id) AS mothers_count,
+        (SELECT COUNT(*)::int FROM clinicians c WHERE c.hospital_id = h.id) AS clinicians_count
+      FROM hospitals h
+      WHERE h.id = $1
+    `, [targetHospitalId]);
+
+    if (rows.length === 0) {
+      const fallback = await pool.query(`
+        SELECT h.*,
+          (SELECT COUNT(*)::int FROM mothers m WHERE m.hospital_id = h.id) AS mothers_count,
+          (SELECT COUNT(*)::int FROM clinicians c WHERE c.hospital_id = h.id) AS clinicians_count
+        FROM hospitals h
+        ORDER BY h.created_at ASC
+        LIMIT 1
+      `);
+      rows = fallback.rows;
+    }
+
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'No hospital facility found in database.' });
+    }
+
+    const senderNum = String(process.env.INFOBIP_SENDER || '2348138048129').replace(/[^\d]/g, '');
+    const whatsapp_gateway = infobip.isConfigured()
+      ? `Connected • Infobip WhatsApp Business API (+${senderNum})`
+      : 'Infobip API Key Missing';
+
+    res.json({
+      hospital: rows[0],
+      surveillance_window: '42 Days Post-Discharge (WHO Standard)',
+      whatsapp_gateway,
+      can_edit: isSuperAdmin || req.user.hospital_id === rows[0].id
+    });
+  } catch (err) {
+    console.error('Get hospital settings error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/hospital-settings', authenticateToken, async (req, res) => {
+  const isSuperAdmin = req.user.role === 'Super Admin';
+  const { hospital_id, name, state, phone, contact_email } = req.body;
+  const targetHospitalId = (isSuperAdmin && hospital_id && hospital_id !== 'all') ? hospital_id : req.user.hospital_id;
+
+  if (!isSuperAdmin && targetHospitalId !== req.user.hospital_id) {
+    return res.status(403).json({ error: 'Not authorized to update another hospital.' });
+  }
+
+  if (!name || !name.trim() || !state || !state.trim()) {
+    return res.status(400).json({ error: 'Hospital name and state are required.' });
+  }
+
+  try {
+    const { rows } = await pool.query(`
+      UPDATE hospitals
+      SET name = $1, state = $2, phone = $3, contact_email = $4
+      WHERE id = $5
+      RETURNING *
+    `, [name.trim(), state.trim(), phone ? phone.trim() : null, contact_email ? contact_email.trim() : null, targetHospitalId]);
+
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Hospital record not found.' });
+    }
+
+    res.json({ success: true, hospital: rows[0] });
+  } catch (err) {
+    console.error('Update hospital settings error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 2. Patient Roster & Triage Filtering (Multi-tenant & Network Overview)
 app.get('/api/mothers', authenticateToken, async (req, res) => {
   const isSuperAdmin = req.user.role === 'Super Admin';
@@ -472,33 +759,50 @@ app.get('/api/mothers', authenticateToken, async (req, res) => {
 
   if (filterHospital) {
     params.push(filterHospital);
-    conditions.push(`hospital_id = $${params.length}`);
+    conditions.push(`m.hospital_id = $${params.length}`);
   }
 
   if (tier && tier !== 'all') {
     params.push(tier);
-    conditions.push(`current_risk_tier = $${params.length}`);
+    conditions.push(`m.current_risk_tier = $${params.length}`);
   }
 
   if (search) {
     params.push(`%${search}%`);
-    conditions.push(`(full_name ILIKE $${params.length} OR phone_number ILIKE $${params.length})`);
+    conditions.push(`(m.full_name ILIKE $${params.length} OR m.phone_number ILIKE $${params.length})`);
   }
 
-  let query = 'SELECT * FROM mothers';
+  let query = `
+    SELECT m.*,
+      h.name AS hospital_name,
+      (
+        SELECT wm.message FROM whatsapp_messages wm
+        WHERE wm.mother_id = m.id
+        ORDER BY wm.created_at DESC
+        LIMIT 1
+      ) AS last_whatsapp_message,
+      (
+        SELECT ch.mother_notes FROM checkins ch
+        WHERE ch.mother_id = m.id
+        ORDER BY ch.created_at DESC
+        LIMIT 1
+      ) AS last_mother_note
+    FROM mothers m
+    LEFT JOIN hospitals h ON m.hospital_id = h.id
+  `;
   if (conditions.length > 0) {
     query += ' WHERE ' + conditions.join(' AND ');
   }
 
   query += `
     ORDER BY 
-      CASE current_risk_tier
+      CASE m.current_risk_tier
         WHEN 'critical' THEN 1
         WHEN 'moderate' THEN 2
         WHEN 'normal' THEN 3
         ELSE 4
       END,
-      last_checkin_date DESC NULLS LAST
+      m.last_checkin_date DESC NULLS LAST
   `;
 
   try {
@@ -556,39 +860,74 @@ app.get('/api/mothers/:id', authenticateToken, async (req, res) => {
 app.post('/api/mothers', authenticateToken, async (req, res) => {
   const isSuperAdmin = req.user.role === 'Super Admin';
   const hospital_id = (isSuperAdmin && req.body.hospital_id) ? req.body.hospital_id : req.user.hospital_id;
-  const { full_name, phone_number, delivery_date, delivery_type, parity } = req.body;
+  const { full_name, baby_name, phone_number, delivery_date, delivery_type, parity } = req.body;
 
   if (!full_name || !phone_number || !delivery_date) {
     return res.status(400).json({ error: 'Full name, WhatsApp phone number, and delivery date are required.' });
+  }
+
+  const normalizedPhone = normalizePhoneNumber(phone_number);
+  const cleanDigits = normalizedPhone.replace(/[^\d]/g, '');
+  if (cleanDigits.length < 8) {
+    return res.status(400).json({ error: 'Please enter a valid WhatsApp phone number with country code.' });
   }
 
   const id = 'mom_' + Date.now().toString(36);
   const enrolled_date = new Date().toISOString().split('T')[0];
 
   try {
+    const existing = await pool.query(
+      "SELECT id FROM mothers WHERE REPLACE(REPLACE(REPLACE(phone_number, ' ', ''), '-', ''), '+', '') LIKE $1 LIMIT 1",
+      [`%${cleanDigits.slice(-10)}%`]
+    );
+    if (existing.rows.length > 0) {
+      return res.status(400).json({ error: 'A mother with this phone number is already enrolled.' });
+    }
+
+    const { rows: hospRows } = await pool.query('SELECT name, phone FROM hospitals WHERE id = $1', [hospital_id]);
+    const hospitalName = hospRows.length > 0 ? hospRows[0].name : 'Mother & Child Hospital';
+    const hospitalPhone = hospRows.length > 0 ? hospRows[0].phone : null;
+
     await pool.query(`
       INSERT INTO mothers (
-        id, hospital_id, full_name, phone_number, delivery_date, delivery_type, parity,
-        enrolled_date, current_risk_tier, last_score, status, conversation_state
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'normal', 0, 'active', 'AWAITING_MOOD')
+        id, hospital_id, full_name, baby_name, phone_number, delivery_date, delivery_type, parity,
+        enrolled_date, current_risk_tier, last_score, status, conversation_state, last_checkin_date
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'normal', 0, 'active', 'AWAITING_MOOD', CURRENT_TIMESTAMP)
     `, [
       id,
       hospital_id,
       full_name.trim(),
-      phone_number.trim(),
+      baby_name ? baby_name.trim() : null,
+      normalizedPhone,
       delivery_date,
       delivery_type || 'Spontaneous Vaginal Delivery',
       parity || 'Primiparous (First-time mother)',
       enrolled_date
     ]);
 
-    // Send initial congratulatory WhatsApp message via SendPulse if contact/channel available
-    const { rows: hospRows } = await pool.query('SELECT name FROM hospitals WHERE id = $1', [hospital_id]);
-    const hospitalName = hospRows.length > 0 ? hospRows[0].name : 'Mother & Child Hospital';
-    
-    console.log(`[Enrollment] Mother ${full_name} enrolled. WhatsApp post-discharge greeting queued.`);
+    const motherObj = {
+      id,
+      hospital_id,
+      hospital_name: hospitalName,
+      hospital_phone: hospitalPhone,
+      full_name: full_name.trim(),
+      baby_name: baby_name ? baby_name.trim() : null,
+      phone_number: normalizedPhone
+    };
 
-    res.json({ success: true, mother_id: id });
+    const greetingMessage = buildInitialGreetingMessage(motherObj);
+    const dispatchResult = await sendWhatsAppAndLog(motherObj, greetingMessage, 'bot', 'MumaLINK Care Bot', {
+      templateName: 'mumalink_checkin_initial',
+      placeholders: [motherObj.full_name, hospitalName]
+    });
+
+    console.log(`[Enrollment] Mother ${motherObj.full_name} enrolled (${normalizedPhone}). Immediate WhatsApp greeting dispatched.`);
+
+    res.json({
+      success: true,
+      mother_id: id,
+      whatsapp_dispatched: Boolean(dispatchResult && (dispatchResult.success || dispatchResult.simulated))
+    });
 
   } catch (err) {
     console.error('Enroll error:', err);
@@ -696,7 +1035,8 @@ app.post('/api/mothers/:id/send-checkin', authenticateToken, async (req, res) =>
 
   try {
     const { rows } = await pool.query(`
-      SELECT m.*, h.name as hospital_name 
+      SELECT m.*, h.name as hospital_name,
+             (CURRENT_DATE - m.delivery_date) as postpartum_days
       FROM mothers m
       JOIN hospitals h ON m.hospital_id = h.id
       WHERE m.id = $1
@@ -704,21 +1044,13 @@ app.post('/api/mothers/:id/send-checkin', authenticateToken, async (req, res) =>
 
     if (rows.length === 0) return res.status(404).json({ error: 'Mother not found' });
     const mother = rows[0];
-
-    const greetingMessage = `Congratulations Mommy ${mother.full_name}.
-We rejoice with you on the safe delivery of your baby from ${mother.hospital_name}.
-
-Your hospital care team is checking in on you. How are you feeling today?
-1 - Happy / Peaceful
-2 - Tired but coping
-3 - Overwhelmed
-4 - Anxious / Restless
-5 - Sad / Low mood
-
-Reply with 1-5 or describe how you feel.`;
+    const days = parseInt(mother.postpartum_days, 10) || 0;
+    const isInitial = !mother.last_checkin_date || days <= 5;
+    const templateName = isInitial ? 'mumalink_checkin_initial' : 'mumalink_checkin_followup';
+    const greetingMessage = isInitial ? buildInitialGreetingMessage(mother) : buildFollowupGreetingMessage(mother);
 
     await sendWhatsAppAndLog(mother, greetingMessage, 'clinician', req.user.full_name, {
-      templateName: 'mumalink_checkin_initial',
+      templateName,
       placeholders: [mother.full_name, mother.hospital_name]
     });
 
@@ -737,7 +1069,7 @@ Reply with 1-5 or describe how you feel.`;
   }
 });
 
-// Automated Postpartum Surveillance Scheduler (Day 3, Day 7, Day 14, Day 28)
+// Automated Postpartum Surveillance Scheduler (Founder cadence: Week 1 negative follow-up / Day 14 routine follow-up)
 async function runAutomatedPostpartumCheckins() {
   try {
     const query = `
@@ -747,43 +1079,23 @@ async function runAutomatedPostpartumCheckins() {
       FROM mothers m
       JOIN hospitals h ON m.hospital_id = h.id
       WHERE m.status = 'active'
-        AND (CURRENT_DATE - COALESCE(m.last_checkin_date::date, '2000-01-01'::date)) >= 3
+        AND COALESCE(m.conversation_state, 'IDLE') NOT LIKE 'EPDS_Q%'
+        AND COALESCE(m.conversation_state, 'IDLE') <> 'AWAITING_EPDS_CONSENT'
+        AND (
+          m.last_checkin_date IS NULL
+          OR (COALESCE(m.consecutive_negative_moods, 0) >= 1 AND (CURRENT_DATE - m.last_checkin_date::date) >= 7)
+          OR (CURRENT_DATE - m.last_checkin_date::date) >= 14
+        )
     `;
     const { rows } = await pool.query(query);
 
     for (const mother of rows) {
-      const days = parseInt(mother.postpartum_days, 10);
-      let templateName = 'mumalink_checkin_followup';
-      let messageText = '';
+      const days = parseInt(mother.postpartum_days, 10) || 0;
+      const useInitial = !mother.last_checkin_date || days <= 5;
+      const templateName = useInitial ? 'mumalink_checkin_initial' : 'mumalink_checkin_followup';
+      const messageText = useInitial ? buildInitialGreetingMessage(mother) : buildFollowupGreetingMessage(mother);
 
-      if (days <= 5) {
-        templateName = 'mumalink_checkin_initial';
-        messageText = `Congratulations Mommy ${mother.full_name}.
-We rejoice with you on the safe delivery of your baby from ${mother.hospital_name}.
-
-Your hospital care team is checking in on you. How are you feeling today?
-1 - Happy / Peaceful
-2 - Tired but coping
-3 - Overwhelmed
-4 - Anxious / Restless
-5 - Sad / Low mood
-
-Reply with 1-5 or describe how you feel.`;
-      } else {
-        templateName = 'mumalink_checkin_followup';
-        messageText = `Good day Mommy ${mother.full_name}.
-This is your post-discharge wellness check-in from ${mother.hospital_name}.
-
-How is your emotional wellbeing, healing, and rest today?
-1 - Doing well / Peaceful
-2 - Tired but managing
-3 - Struggling / Overwhelmed
-4 - Feeling down or worried
-
-Reply with 1-4 to update your care team.`;
-      }
-
-      console.log(`[Automated Check-in] Triggering Day ${days} surveillance for ${mother.full_name} (${mother.phone_number})`);
+      console.log(`[Automated Check-in] Triggering Day ${days} surveillance (${templateName}) for ${mother.full_name} (${mother.phone_number})`);
       await sendWhatsAppAndLog(mother, messageText, 'bot', 'MumaLINK Automated Surveillance', {
         templateName,
         placeholders: [mother.full_name, mother.hospital_name]
@@ -937,21 +1249,24 @@ async function processIncomingMotherMessage({ rawPhone, incomingText, contactNam
     console.log(`[Webhook] New mother contacted bot: ${rawPhone}. Auto-enrolling into triage database...`);
     const newMotherId = 'm_' + Date.now().toString(36);
     const motherName = contactName || 'Postpartum Mother';
-    const formattedPhone = String(rawPhone).startsWith('+') ? String(rawPhone) : ('+' + String(rawPhone).replace(/^\+/, ''));
+    const formattedPhone = normalizePhoneNumber(rawPhone);
+
+    const hospLookup = await pool.query("SELECT id, name, phone FROM hospitals ORDER BY CASE WHEN id = 'hosp_ondo_01' THEN 0 ELSE 1 END, created_at ASC LIMIT 1");
+    const defaultHospitalId = hospLookup.rows[0]?.id || 'hosp_ondo_01';
 
     const insertRes = await pool.query(`
       INSERT INTO mothers (
         id, hospital_id, full_name, phone_number, delivery_date, delivery_type, parity,
         enrolled_date, current_risk_tier, sendpulse_contact_id, conversation_state, consecutive_negative_moods, last_checkin_date
       ) VALUES (
-        $1, 'hosp_ondo_01', $2, $3, CURRENT_DATE, 'Spontaneous Vaginal Delivery',
-        'Primiparous (First-time mother)', CURRENT_DATE, 'normal', $4, 'AWAITING_MOOD', 0, CURRENT_TIMESTAMP
+        $1, $2, $3, $4, CURRENT_DATE, 'Spontaneous Vaginal Delivery',
+        'Primiparous (First-time mother)', CURRENT_DATE, 'normal', $5, 'AWAITING_MOOD', 0, CURRENT_TIMESTAMP
       ) RETURNING *
-    `, [newMotherId, motherName, formattedPhone, contactId]);
+    `, [newMotherId, defaultHospitalId, motherName, formattedPhone, contactId]);
 
     mother = insertRes.rows[0];
-    mother.hospital_name = 'Ondo State Mother & Child Specialist Hospital';
-    mother.hospital_phone = '+234 800 686 2546';
+    mother.hospital_name = hospLookup.rows[0]?.name || 'Mother & Child Hospital';
+    mother.hospital_phone = hospLookup.rows[0]?.phone || null;
 
     // Log mother's inbound initiation message
     if (incomingText) {
@@ -965,20 +1280,7 @@ async function processIncomingMotherMessage({ rawPhone, incomingText, contactNam
       });
     }
 
-    const welcomeMsg = `Congratulations Mommy ${mother.full_name}.
-We rejoice with you on the safe delivery of your baby from ${mother.hospital_name}.
-
-Your hospital care team is active on this line to monitor your healing, emotional wellbeing, and baby's progress.
-
-How are you feeling today?
-1 - Happy / Peaceful
-2 - Tired but coping
-3 - Overwhelmed
-4 - Anxious / Restless
-5 - Sad / Low mood
-
-Reply with a number (1-5) or type how you feel.`;
-
+    const welcomeMsg = buildInitialGreetingMessage(mother);
     await sendWhatsAppAndLog(mother, welcomeMsg, 'bot', 'MumaLINK Care Bot');
     return;
   } else {
@@ -1021,13 +1323,24 @@ Reply with a number (1-5) or type how you feel.`;
   let state = mother.conversation_state || 'IDLE';
   let stateData = mother.state_data || {};
   let negCount = parseInt(mother.consecutive_negative_moods, 10) || 0;
-  const lowerText = incomingText.toLowerCase();
+  const lowerText = incomingText.toLowerCase().trim();
 
-  // Reset command
+  // Patient Opt-Out Command
+  if (lowerText === 'stop' || lowerText === 'unsubscribe') {
+    await pool.query("UPDATE mothers SET status = 'paused', conversation_state = 'IDLE' WHERE id = $1", [mother.id]);
+    const stopMsg = `Mommy ${mother.full_name}, automated check-in messages have been paused as requested. You can reply *START* at any time to resume check-ins or contact ${mother.hospital_name || 'your hospital'}.`;
+    await sendWhatsAppAndLog(mother, stopMsg, 'bot', 'MumaLINK Care Bot');
+    return;
+  }
+
+  // Reset / Resume command
   if (lowerText === 'reset' || lowerText === 'start') {
     state = 'IDLE';
     negCount = 0;
     stateData = {};
+    if (mother.status !== 'active') {
+      await pool.query("UPDATE mothers SET status = 'active' WHERE id = $1", [mother.id]);
+    }
   }
 
   // Immediate Clinical Emergency / Help Trigger
@@ -1043,7 +1356,7 @@ Reply with a number (1-5) or type how you feel.`;
 Your message has been escalated to your hospital maternal care team as an urgent clinical priority. A doctor or midwife has been alerted on your portal.
 
 If you are experiencing severe distress or a medical emergency, please call your maternity unit immediately:
-Hospital Emergency Line: ${mother.hospital_phone || '+234 800 686 2546'}
+Hospital Emergency Line: ${mother.hospital_phone || 'your maternity clinic'}
 
 You are not alone, and your care team is standing by.`;
 
@@ -1057,20 +1370,7 @@ You are not alone, and your care team is standing by.`;
 
   // STATE 1: IDLE — Initiates with congratulatory post-discharge check-in
   if (state === 'IDLE') {
-    const greetingMsg = `Congratulations Mommy ${mother.full_name}.
-We rejoice with you on the safe delivery of your baby from ${mother.hospital_name || 'Mother & Child Hospital'}.
-
-As your hospital care team, your healing, rest, and peace of mind matter deeply to us.
-
-How are you feeling today?
-1 - Happy / Peaceful
-2 - Tired but coping
-3 - Overwhelmed
-4 - Anxious / Restless
-5 - Sad / Low mood
-
-Reply with a number (1-5) or type how you feel.`;
-
+    const greetingMsg = buildInitialGreetingMessage(mother);
     await sendWhatsAppAndLog(mother, greetingMsg, 'bot', 'MumaLINK Care Bot');
 
     await pool.query(
@@ -1080,19 +1380,27 @@ Reply with a number (1-5) or type how you feel.`;
     return;
   }
 
-  // STATE 2: AWAITING_MOOD — Classifies positive vs. negative mood
+  // STATE 2: AWAITING_MOOD — Supports single or multi-mood selection (Founder Voice Note 2)
   if (state === 'AWAITING_MOOD') {
-    const isPositive = ['1', '2', 'happy', 'fine', 'good', 'great', 'coping', 'peaceful', 'blessed', 'okay', 'well'].some(
-      w => lowerText.includes(w)
-    );
-    const isNegative = ['3', '4', '5', 'sad', 'overwhelmed', 'anxious', 'unhappy', 'depressed', 'crying', 'cry', 'exhausted', 'scared', 'bad', 'tired'].some(
-      w => lowerText.includes(w)
-    );
+    const moodParsed = parseMoodSelection(incomingText);
 
-    if (isPositive && !isNegative) {
+    if (moodParsed.selections.length === 0) {
+      const clarifyMsg = `Thank you for messaging, Mommy ${mother.full_name}. Please reply with one or more mood numbers (1 to 5) so we can log how you feel:
+1 - Happy / Peaceful
+2 - Tired but coping
+3 - Unhappy / Overwhelmed
+4 - Anxious / Worried
+5 - Sad / Low mood`;
+      await sendWhatsAppAndLog(mother, clarifyMsg, 'bot', 'MumaLINK Care Bot');
+      return;
+    }
+
+    const moodSummary = `Selected Moods: ${moodParsed.labels.join(', ')} | Raw Reply: ${incomingText}`;
+
+    if (moodParsed.hasPositive && !moodParsed.hasNegative) {
       // Positive Response
       const reply = `We are glad to hear that, Mommy ${mother.full_name}.
-Motherhood is a tender journey, and you are doing wonderfully. Please remember to rest whenever baby rests. Your care team at ${mother.hospital_name} is always by your side. We will check in on you again soon.`;
+Motherhood is a tender journey, and you are doing wonderfully. Please remember to rest whenever baby rests. Your care team at ${mother.hospital_name || 'your hospital'} is always by your side. We will check in on you again soon.`;
 
       await sendWhatsAppAndLog(mother, reply, 'bot', 'MumaLINK Care Bot');
 
@@ -1100,7 +1408,7 @@ Motherhood is a tender journey, and you are doing wonderfully. Please remember t
       await pool.query(`
         INSERT INTO checkins (id, mother_id, hospital_id, checkin_day_label, epds_score, risk_tier, mother_notes)
         VALUES ($1, $2, $3, 'WhatsApp Mood Check-in', 3, 'normal', $4)
-      `, [checkinId, mother.id, mother.hospital_id, incomingText]);
+      `, [checkinId, mother.id, mother.hospital_id, moodSummary]);
 
       await pool.query(`
         UPDATE mothers 
@@ -1110,13 +1418,13 @@ Motherhood is a tender journey, and you are doing wonderfully. Please remember t
       return;
     }
 
-    // Negative Response
+    // Negative Response (includes mixed positive+negative selections where distress is present)
     negCount += 1;
     const checkinId = 'chk_' + Date.now().toString(36);
     await pool.query(`
       INSERT INTO checkins (id, mother_id, hospital_id, checkin_day_label, epds_score, risk_tier, mother_notes)
       VALUES ($1, $2, $3, 'WhatsApp Mood Alert', 11, 'moderate', $4)
-    `, [checkinId, mother.id, mother.hospital_id, incomingText]);
+    `, [checkinId, mother.id, mother.hospital_id, moodSummary]);
 
     await pool.query(`
       UPDATE mothers 
@@ -1124,14 +1432,18 @@ Motherhood is a tender journey, and you are doing wonderfully. Please remember t
       WHERE id = $2
     `, [negCount, mother.id]);
 
-    // If persistent negative mood (>= 2 times as founder specified), offer the 10 EPDS questions
+    // If persistent negative mood (>= 2 times as founder specified), invite the 10 EPDS questions with approved template
     if (negCount >= 2) {
+      const hospitalLabel = mother.hospital_name || 'Mother & Child Hospital';
       const consentMsg = `Thank you for sharing honestly, Mommy ${mother.full_name}.
-Because you've been feeling overwhelmed and low lately, would you like to answer 10 quick clinical questions to help us assess your emotional wellbeing and ensure your hospital care team supports you properly?
+Because your mood has been low across recent check-ins, would you like to answer 10 quick questions to help us assess your wellbeing and ensure your care team at ${hospitalLabel} supports you properly?
 
 Reply *YES* to begin or *NO* to pause.`;
 
-      await sendWhatsAppAndLog(mother, consentMsg, 'bot', 'MumaLINK Care Bot');
+      await sendWhatsAppAndLog(mother, consentMsg, 'bot', 'MumaLINK Care Bot', {
+        templateName: 'mumalink_assessment_invite',
+        placeholders: [mother.full_name, hospitalLabel]
+      });
 
       await pool.query("UPDATE mothers SET conversation_state = 'AWAITING_EPDS_CONSENT' WHERE id = $1", [mother.id]);
       return;

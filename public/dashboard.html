@@ -362,15 +362,21 @@
       </div>
 
       <form id="enrollMotherForm" class="modal-body">
-        <div class="form-group">
-          <label class="form-label">Mother's Full Name</label>
-          <input type="text" id="enrollName" class="form-input" placeholder="e.g. Oyindamola Adeleke" required>
+        <div class="form-row-2">
+          <div class="form-group">
+            <label class="form-label">Mother's Full Name</label>
+            <input type="text" id="enrollName" class="form-input" placeholder="e.g. Oyindamola Adeleke" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Baby's Name (Optional)</label>
+            <input type="text" id="enrollBabyName" class="form-input" placeholder="e.g. Baby Tolu">
+          </div>
         </div>
 
         <div class="form-group">
           <label class="form-label">WhatsApp Phone Number</label>
           <input type="tel" id="enrollPhone" class="form-input" placeholder="e.g. +234 803 123 4567" required>
-          <span class="form-hint">MumaLINK sends the automated post-discharge check-ins to this number.</span>
+          <span class="form-hint">MumaLINK dispatches an immediate post-discharge WhatsApp greeting to this number.</span>
         </div>
 
         <div class="form-row-2">
@@ -536,51 +542,8 @@
         </button>
       </div>
       <div class="modal-body">
-        <div class="clinical-team-list">
-          <div class="team-member-card">
-            <div class="team-avatar">KA</div>
-            <div class="team-info">
-              <div class="team-name-row">
-                <span class="team-name">Dr. Kehinde Adeleke</span>
-                <span class="team-badge badge-active">On Duty</span>
-              </div>
-              <span class="team-role">Consultant Obstetrician & Gynaecologist</span>
-              <span class="team-facility">Ondo State Mother & Child Specialist Hospital</span>
-            </div>
-          </div>
-          <div class="team-member-card">
-            <div class="team-avatar">BO</div>
-            <div class="team-info">
-              <div class="team-name-row">
-                <span class="team-name">Nurse Blessing Okon</span>
-                <span class="team-badge badge-active">On Duty</span>
-              </div>
-              <span class="team-role">Lead Postnatal Nurse • Ward 3</span>
-              <span class="team-facility">Ondo State Mother & Child Specialist Hospital</span>
-            </div>
-          </div>
-          <div class="team-member-card">
-            <div class="team-avatar">OA</div>
-            <div class="team-info">
-              <div class="team-name-row">
-                <span class="team-name">Dr. Olushola Adeoye</span>
-                <span class="team-badge badge-oncall">On Call</span>
-              </div>
-              <span class="team-role">Supervising Medical Officer</span>
-              <span class="team-facility">State Health Management Board</span>
-            </div>
-          </div>
-          <div class="team-member-card">
-            <div class="team-avatar">FB</div>
-            <div class="team-info">
-              <div class="team-name-row">
-                <span class="team-name">Sr. Fatima Bello</span>
-                <span class="team-badge badge-oncall">On Call</span>
-              </div>
-              <span class="team-role">Maternal Mental Health Triage Specialist</span>
-              <span class="team-facility">Ondo State Specialist Hospital</span>
-            </div>
-          </div>
+        <div class="clinical-team-list" id="clinicalTeamList">
+          <div class="loading-state">Loading clinical team from PostgreSQL...</div>
         </div>
       </div>
       <div class="modal-footer">
@@ -603,30 +566,7 @@
       </div>
       <div class="modal-body">
         <div class="notifications-list" id="notificationsList">
-          <div class="notification-item">
-            <span class="notif-dot critical"></span>
-            <div class="notif-content">
-              <div class="notif-title">High EPDS Score Flagged</div>
-              <p class="notif-desc">Patient Myrtle flagged with moderate postpartum emotional stress (Score 11/30). Follow-up check scheduled.</p>
-              <span class="notif-time">14m ago</span>
-            </div>
-          </div>
-          <div class="notification-item">
-            <span class="notif-dot normal"></span>
-            <div class="notif-content">
-              <div class="notif-title">WhatsApp Check-in Delivered</div>
-              <p class="notif-desc">Automated Day-3 clinical check-in successfully transmitted via SendPulse.</p>
-              <span class="notif-time">1h ago</span>
-            </div>
-          </div>
-          <div class="notification-item">
-            <span class="notif-dot info"></span>
-            <div class="notif-content">
-              <div class="notif-title">NDPR Compliance Audit</div>
-              <p class="notif-desc">Daily triage registry encrypted and synchronized with PostgreSQL instance.</p>
-              <span class="notif-time">Today, 08:00 AM</span>
-            </div>
-          </div>
+          <div class="loading-state">Loading live triage notifications...</div>
         </div>
       </div>
       <div class="modal-footer">
@@ -730,33 +670,47 @@
           <i data-lucide="x"></i>
         </button>
       </div>
-      <div class="modal-body">
+      <form id="hospitalSettingsForm" class="modal-body">
         <div class="form-group">
           <label class="form-label">Healthcare Facility</label>
-          <input type="text" class="form-input" value="Ondo State Mother & Child Specialist Hospital (Akure)" readonly>
+          <input type="text" id="settingsHospitalName" class="form-input" placeholder="Loading facility..." required>
         </div>
         <div class="form-row-2">
           <div class="form-group">
-            <label class="form-label">Facility Code</label>
-            <input type="text" class="form-input" value="MCH-AKR-001" readonly>
+            <label class="form-label">Facility ID</label>
+            <input type="text" id="settingsHospitalCode" class="form-input" readonly>
           </div>
           <div class="form-group">
             <label class="form-label">State / Jurisdiction</label>
-            <input type="text" class="form-input" value="Ondo State, Nigeria" readonly>
+            <input type="text" id="settingsHospitalState" class="form-input" placeholder="Loading state..." required>
+          </div>
+        </div>
+        <div class="form-row-2">
+          <div class="form-group">
+            <label class="form-label">Maternity Emergency Phone</label>
+            <input type="tel" id="settingsHospitalPhone" class="form-input" placeholder="+234 ...">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Official Contact Email</label>
+            <input type="email" id="settingsHospitalEmail" class="form-input" placeholder="maternity@hospital.org">
           </div>
         </div>
         <div class="form-group">
           <label class="form-label">Surveillance Window</label>
-          <input type="text" class="form-input" value="42 Days Post-Discharge (WHO Standard)" readonly>
+          <input type="text" id="settingsSurveillanceWindow" class="form-input" readonly>
         </div>
         <div class="form-group">
           <label class="form-label">WhatsApp Gateway Status</label>
-          <input type="text" class="form-input" value="Connected • SendPulse Cloud API Node" readonly>
+          <input type="text" id="settingsWhatsappGateway" class="form-input" readonly>
         </div>
-      </div>
-      <div class="modal-footer">
-        <button type="button" id="closeHospitalSettingsFooterBtn" class="btn btn-primary-pill">Close Settings</button>
-      </div>
+        <div class="modal-footer">
+          <button type="button" id="closeHospitalSettingsFooterBtn" class="btn btn-secondary-pill">Close</button>
+          <button type="submit" id="saveHospitalSettingsBtn" class="btn btn-primary-pill">
+            <i data-lucide="check"></i>
+            <span>Save Facility Profile</span>
+          </button>
+        </div>
+      </form>
     </div>
   </div>
 
@@ -764,6 +718,6 @@
   <div id="toastContainer" class="toast-container"></div>
 
   <!-- Application Controller -->
-  <script src="app.js"></script>
+  <script src="app.js?v=3.3"></script>
 </body>
 </html>

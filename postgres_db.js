@@ -48,6 +48,7 @@ async function initPostgresDatabase() {
         id VARCHAR(64) PRIMARY KEY,
         hospital_id VARCHAR(64) NOT NULL REFERENCES hospitals(id) ON DELETE CASCADE,
         full_name VARCHAR(255) NOT NULL,
+        baby_name VARCHAR(255),
         phone_number VARCHAR(50) NOT NULL UNIQUE,
         delivery_date DATE NOT NULL,
         delivery_type VARCHAR(100) DEFAULT 'Spontaneous Vaginal Delivery',
@@ -57,8 +58,17 @@ async function initPostgresDatabase() {
         last_score INT DEFAULT 0,
         last_checkin_date TIMESTAMP WITH TIME ZONE,
         status VARCHAR(50) DEFAULT 'active',
-        notes_count INT DEFAULT 0
+        notes_count INT DEFAULT 0,
+        sendpulse_contact_id VARCHAR(100),
+        conversation_state VARCHAR(50) DEFAULT 'IDLE',
+        consecutive_negative_moods INT DEFAULT 0,
+        state_data JSONB DEFAULT '{}'::jsonb
       );
+      ALTER TABLE mothers ADD COLUMN IF NOT EXISTS baby_name VARCHAR(255);
+      ALTER TABLE mothers ADD COLUMN IF NOT EXISTS sendpulse_contact_id VARCHAR(100);
+      ALTER TABLE mothers ADD COLUMN IF NOT EXISTS conversation_state VARCHAR(50) DEFAULT 'IDLE';
+      ALTER TABLE mothers ADD COLUMN IF NOT EXISTS consecutive_negative_moods INT DEFAULT 0;
+      ALTER TABLE mothers ADD COLUMN IF NOT EXISTS state_data JSONB DEFAULT '{}'::jsonb;
     `);
 
     // 4. Checkin Sessions (EPDS Screening Records)

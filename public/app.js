@@ -298,6 +298,7 @@ function setupEventListeners() {
     navStaffer.addEventListener('click', (e) => {
       e.preventDefault();
       openModal(clinicalTeamModalOverlay);
+      loadClinicalTeam();
     });
   }
   const closeClinicalTeamModalBtn = document.getElementById('closeClinicalTeamModalBtn');
@@ -309,6 +310,7 @@ function setupEventListeners() {
     navNotifications.addEventListener('click', (e) => {
       e.preventDefault();
       openModal(notificationsModalOverlay);
+      loadNotifications();
     });
   }
   const closeNotificationsModalBtn = document.getElementById('closeNotificationsModalBtn');
@@ -318,6 +320,7 @@ function setupEventListeners() {
   if (closeNotificationsFooterBtn) closeNotificationsFooterBtn.addEventListener('click', () => closeModal(notificationsModalOverlay));
   if (clearNotificationsBtn) {
     clearNotificationsBtn.addEventListener('click', () => {
+      localStorage.setItem('mumalink_notifs_cleared_at', new Date().toISOString());
       const list = document.getElementById('notificationsList');
       if (list) list.innerHTML = `<div class="empty-state" style="padding: 20px; text-align: center; color: var(--text-muted);">All triage notifications cleared.</div>`;
       showToast("Notifications cleared.");
@@ -350,12 +353,15 @@ function setupEventListeners() {
     navSettings.addEventListener('click', (e) => {
       e.preventDefault();
       openModal(hospitalSettingsModalOverlay);
+      loadHospitalSettings();
     });
   }
   const closeHospitalSettingsModalBtn = document.getElementById('closeHospitalSettingsModalBtn');
   const closeHospitalSettingsFooterBtn = document.getElementById('closeHospitalSettingsFooterBtn');
+  const hospitalSettingsForm = document.getElementById('hospitalSettingsForm');
   if (closeHospitalSettingsModalBtn) closeHospitalSettingsModalBtn.addEventListener('click', () => closeModal(hospitalSettingsModalOverlay));
   if (closeHospitalSettingsFooterBtn) closeHospitalSettingsFooterBtn.addEventListener('click', () => closeModal(hospitalSettingsModalOverlay));
+  if (hospitalSettingsForm) hospitalSettingsForm.addEventListener('submit', handleSaveHospitalSettings);
 
   // Refresh
   if (refreshBtn) {
@@ -636,14 +642,8 @@ function renderPatientItem(m) {
   const daysSinceDelivery = calculatePostpartumDays(m.delivery_date);
   const timeLabel = formatRelativeTime(m.last_checkin_date);
 
-  let snippet = m.mother_notes || "WhatsApp check-in scheduled...";
-  if (m.current_risk_tier === 'critical') {
-    snippet = "Elevated EPDS Score (Alert dispatched to care team)";
-  } else if (m.current_risk_tier === 'moderate') {
-    snippet = "Reported fatigue and emotional adjustment stress";
-  } else {
-    snippet = "Resting well, baby feeding calmly";
-  }
+  const rawSnippet = m.last_whatsapp_message || m.last_mother_note || 'Enrolled — awaiting first WhatsApp response';
+  const snippet = String(rawSnippet).replace(/\s+/g, ' ').trim();
 
   const tierClass = `score-${m.current_risk_tier}`;
   const avatarClass = `avatar-${m.current_risk_tier}`;
@@ -696,7 +696,7 @@ async function loadPatientCase(motherId, isQuiet = false) {
 
     // Header Details
     drawerPatientName.textContent = mother.full_name;
-    drawerPatientParity.textContent = mother.parity;
+    drawerPatientParity.textContent = `${mother.parity}${mother.baby_name ? ' • Baby: ' + mother.baby_name : ''}`;
     drawerDeliveryDate.textContent = `Delivered ${mother.delivery_date ? mother.delivery_date.split('T')[0] : '--'}`;
     drawerDeliveryType.textContent = mother.delivery_type;
     drawerPhone.textContent = mother.phone_number;
@@ -1068,6 +1068,7 @@ async function handleEnrollSubmit(e) {
   e.preventDefault();
 
   const full_name = document.getElementById('enrollName').value;
+  const baby_name = document.getElementById('enrollBabyName')?.value?.trim() || '';
   const phone_number = document.getElementById('enrollPhone').value;
   const delivery_date = document.getElementById('enrollDeliveryDate').value;
   const delivery_type = document.getElementById('enrollDeliveryType').value;
@@ -1079,6 +1080,7 @@ async function handleEnrollSubmit(e) {
       method: 'POST',
       body: JSON.stringify({
         full_name,
+        baby_name,
         phone_number,
         delivery_date,
         delivery_type,
@@ -1091,7 +1093,11 @@ async function handleEnrollSubmit(e) {
     if (data.success) {
       closeModal(enrollModalOverlay);
       enrollMotherForm.reset();
-      showToast(`Mother ${full_name} enrolled into PostgreSQL.`);
+      const deliveryDateInput = document.getElementById('enrollDeliveryDate');
+      if (deliveryDateInput) deliveryDateInput.value = new Date().toISOString().split('T')[0];
+      showToast(data.whatsapp_dispatched
+        ? `Mother ${full_name} enrolled and WhatsApp greeting sent.`
+        : `Mother ${full_name} enrolled into PostgreSQL.`);
       loadDashboardStats();
       await loadMothers();
       loadPatientCase(data.mother_id);
@@ -1101,6 +1107,163 @@ async function handleEnrollSubmit(e) {
   } catch (err) {
     console.error("Error enrolling mother:", err);
     showToast("Server error during enrollment.");
+  }
+}
+
+// ==========================================================================
+// Live PostgreSQL Modals: Clinical Team, Notifications & Hospital Settings
+// ==========================================================================
+async function loadClinicalTeam() {
+  const listEl = document.getElementById('clinicalTeamList');
+  if (!listEl) return;
+  listEl.innerHTML = `<div class="loading-state">Loading clinical team from PostgreSQL...</div>`;
+
+  try {
+    const query = activeHospitalId ? `?hospital_id=${encodeURIComponent(activeHospitalId)}` : '';
+    const res = await authFetch(`/api/clinicians${query}`);
+    const clinicians = await res.json();
+
+    if (!res.ok) {
+      listEl.innerHTML = `<div class="empty-state">${escapeHtml(clinicians.error || 'Unable to load clinicians.')}</div>`;
+      return;
+    }
+
+    if (!Array.isArray(clinicians) || clinicians.length === 0) {
+      listEl.innerHTML = `<div class="empty-state">No clinicians registered for this facility yet.</div>`;
+      return;
+    }
+
+    listEl.innerHTML = clinicians.map(c => {
+      const initials = (c.full_name || 'DR')
+        .split(' ')
+        .filter(Boolean)
+        .map(w => w[0])
+        .slice(-2)
+        .join('')
+        .toUpperCase();
+      return `
+        <div class="team-member-card">
+          <div class="team-avatar">${escapeHtml(initials)}</div>
+          <div class="team-info">
+            <div class="team-name-row">
+              <span class="team-name">${escapeHtml(c.full_name)}</span>
+              <span class="team-badge badge-active">${escapeHtml(c.role === 'Super Admin' ? 'Admin' : 'Active')}</span>
+            </div>
+            <span class="team-role">${escapeHtml(c.role)} • ${escapeHtml(c.email)}</span>
+            <span class="team-facility">${escapeHtml(c.hospital_name || 'MumaLINK Partner Facility')}</span>
+          </div>
+        </div>
+      `;
+    }).join('');
+  } catch (err) {
+    console.error('Load clinical team error:', err);
+    listEl.innerHTML = `<div class="empty-state">Failed to fetch clinical team directory.</div>`;
+  }
+}
+
+async function loadNotifications() {
+  const listEl = document.getElementById('notificationsList');
+  if (!listEl) return;
+  listEl.innerHTML = `<div class="loading-state">Loading live triage notifications...</div>`;
+
+  try {
+    const query = activeHospitalId ? `?hospital_id=${encodeURIComponent(activeHospitalId)}` : '';
+    const res = await authFetch(`/api/notifications${query}`);
+    const notifications = await res.json();
+
+    if (!res.ok) {
+      listEl.innerHTML = `<div class="empty-state">${escapeHtml(notifications.error || 'Unable to load notifications.')}</div>`;
+      return;
+    }
+
+    const clearedAt = localStorage.getItem('mumalink_notifs_cleared_at');
+    const visible = Array.isArray(notifications)
+      ? notifications.filter(n => !clearedAt || new Date(n.created_at) > new Date(clearedAt))
+      : [];
+
+    if (visible.length === 0) {
+      listEl.innerHTML = `<div class="empty-state" style="padding: 20px; text-align: center; color: var(--text-muted);">No new triage events recorded in PostgreSQL.</div>`;
+      return;
+    }
+
+    listEl.innerHTML = visible.map(n => {
+      const dotClass = n.severity === 'critical' ? 'critical' : (n.severity === 'moderate' ? 'moderate' : (n.severity === 'normal' ? 'normal' : 'info'));
+      return `
+        <div class="notification-item">
+          <span class="notif-dot ${dotClass}"></span>
+          <div class="notif-content">
+            <div class="notif-title">${escapeHtml(n.title)}</div>
+            <p class="notif-desc">${escapeHtml(n.description)}</p>
+            <span class="notif-time">${escapeHtml(formatDateTime(n.created_at))}</span>
+          </div>
+        </div>
+      `;
+    }).join('');
+  } catch (err) {
+    console.error('Load notifications error:', err);
+    listEl.innerHTML = `<div class="empty-state">Failed to load live notifications.</div>`;
+  }
+}
+
+async function loadHospitalSettings() {
+  const nameEl = document.getElementById('settingsHospitalName');
+  const codeEl = document.getElementById('settingsHospitalCode');
+  const stateEl = document.getElementById('settingsHospitalState');
+  const phoneEl = document.getElementById('settingsHospitalPhone');
+  const emailEl = document.getElementById('settingsHospitalEmail');
+  const windowEl = document.getElementById('settingsSurveillanceWindow');
+  const gatewayEl = document.getElementById('settingsWhatsappGateway');
+  const saveBtn = document.getElementById('saveHospitalSettingsBtn');
+
+  try {
+    const query = activeHospitalId ? `?hospital_id=${encodeURIComponent(activeHospitalId)}` : '';
+    const res = await authFetch(`/api/hospital-settings${query}`);
+    const data = await res.json();
+
+    if (!res.ok || !data.hospital) {
+      showToast(data.error || 'Unable to load hospital settings.');
+      return;
+    }
+
+    const h = data.hospital;
+    if (nameEl) nameEl.value = h.name || '';
+    if (codeEl) codeEl.value = h.id || '';
+    if (stateEl) stateEl.value = h.state || '';
+    if (phoneEl) phoneEl.value = h.phone || '';
+    if (emailEl) emailEl.value = h.contact_email || '';
+    if (windowEl) windowEl.value = data.surveillance_window || '42 Days Post-Discharge (WHO Standard)';
+    if (gatewayEl) gatewayEl.value = data.whatsapp_gateway || 'Infobip WhatsApp Business API';
+    if (saveBtn) saveBtn.disabled = !data.can_edit;
+  } catch (err) {
+    console.error('Load hospital settings error:', err);
+    showToast('Error loading hospital settings from PostgreSQL.');
+  }
+}
+
+async function handleSaveHospitalSettings(e) {
+  e.preventDefault();
+  const hospital_id = document.getElementById('settingsHospitalCode')?.value;
+  const name = document.getElementById('settingsHospitalName')?.value?.trim();
+  const state = document.getElementById('settingsHospitalState')?.value?.trim();
+  const phone = document.getElementById('settingsHospitalPhone')?.value?.trim();
+  const contact_email = document.getElementById('settingsHospitalEmail')?.value?.trim();
+
+  try {
+    const res = await authFetch('/api/hospital-settings', {
+      method: 'PUT',
+      body: JSON.stringify({ hospital_id, name, state, phone, contact_email })
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast('Hospital facility profile saved to PostgreSQL.');
+      await loadHospitalsList();
+      await loadDashboardStats();
+    } else {
+      showToast(data.error || 'Failed to update hospital profile.');
+    }
+  } catch (err) {
+    console.error('Save hospital settings error:', err);
+    showToast('Network error saving hospital settings.');
   }
 }
 

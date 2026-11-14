@@ -1935,6 +1935,7 @@ body {
 }
 
 .notif-dot.critical { background: var(--color-critical); }
+.notif-dot.moderate { background: var(--color-moderate); }
 .notif-dot.normal { background: var(--color-normal); }
 .notif-dot.info { background: var(--brand-blue); }
 
